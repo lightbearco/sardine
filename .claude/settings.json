@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat /Users/dawar/Code/Lightbear/sardine/src/routes/demo/*.tsx)",
+      "Read(//Users/dawar/.claude/plans/**)",
+      "Bash(git -C /Users/dawar/Code/Lightbear/sardine log --oneline -20)"
+    ]
+  }
+}
