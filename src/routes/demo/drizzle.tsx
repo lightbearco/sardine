@@ -1,51 +1,10 @@
-import { createFileRoute, useRouter } from '@tanstack/react-router'
-import { createServerFn } from '@tanstack/react-start'
-import { db } from '#/db/index'
-import { desc } from 'drizzle-orm'
-import { todos } from '#/db/schema'
-
-const getTodos = createServerFn({
-  method: 'GET',
-}).handler(async () => {
-  return await db.query.todos.findMany({
-    orderBy: [desc(todos.createdAt)],
-  })
-})
-
-const createTodo = createServerFn({
-  method: 'POST',
-})
-  .inputValidator((data: { title: string }) => data)
-  .handler(async ({ data }) => {
-    await db.insert(todos).values({ title: data.title })
-    return { success: true }
-  })
+import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/demo/drizzle')({
   component: DemoDrizzle,
-  loader: async () => await getTodos(),
 })
 
 function DemoDrizzle() {
-  const router = useRouter()
-  const todos = Route.useLoaderData()
-
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const formData = new FormData(e.target as HTMLFormElement)
-    const title = formData.get('title') as string
-
-    if (!title) return
-
-    try {
-      await createTodo({ data: { title } })
-      router.invalidate()
-      ;(e.target as HTMLFormElement).reset()
-    } catch (error) {
-      console.error('Failed to create todo:', error)
-    }
-  }
-
   return (
     <div
       className="flex items-center justify-center min-h-screen p-4 text-white"
@@ -85,60 +44,26 @@ function DemoDrizzle() {
           </h1>
         </div>
 
-        <h2 className="text-2xl font-bold mb-4 text-indigo-200">Todos</h2>
-
-        <ul className="space-y-3 mb-6">
-          {todos.map((todo) => (
-            <li
-              key={todo.id}
-              className="rounded-lg p-4 shadow-md border transition-all hover:scale-[1.02] cursor-pointer group"
-              style={{
-                background:
-                  'linear-gradient(135deg, rgba(93, 103, 227, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%)',
-                borderColor: 'rgba(93, 103, 227, 0.3)',
-              }}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-medium text-white group-hover:text-indigo-200 transition-colors">
-                  {todo.title}
-                </span>
-                <span className="text-xs text-indigo-300/70">#{todo.id}</span>
-              </div>
-            </li>
-          ))}
-          {todos.length === 0 && (
-            <li className="text-center py-8 text-indigo-300/70">
-              No todos yet. Create one below!
-            </li>
-          )}
-        </ul>
-
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            type="text"
-            name="title"
-            placeholder="Add a new todo..."
-            className="flex-1 px-4 py-3 rounded-lg border focus:outline-none focus:ring-2 transition-all text-white placeholder-indigo-300/50"
-            style={{
-              background: 'rgba(93, 103, 227, 0.1)',
-              borderColor: 'rgba(93, 103, 227, 0.3)',
-              focusRing: 'rgba(93, 103, 227, 0.5)',
-            }}
-          />
-          <button
-            type="submit"
-            className="px-6 py-3 font-semibold rounded-lg shadow-lg transition-all duration-200 hover:shadow-xl hover:scale-105 active:scale-95 whitespace-nowrap"
-            style={{
-              background: 'linear-gradient(135deg, #5d67e3 0%, #8b5cf6 100%)',
-              color: 'white',
-            }}
-          >
-            Add Todo
-          </button>
-        </form>
+        <div
+          className="rounded-lg p-6 border mb-8"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(93, 103, 227, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%)',
+            borderColor: 'rgba(93, 103, 227, 0.3)',
+          }}
+        >
+          <h2 className="text-2xl font-bold mb-3 text-indigo-200">
+            No Sample Todo Table
+          </h2>
+          <p className="text-indigo-100/85 leading-7">
+            This demo no longer creates or queries a sample <code>todos</code>{' '}
+            table. Use it as a lightweight reference for wiring Drizzle into the
+            app, then point your queries at your real schema instead.
+          </p>
+        </div>
 
         <div
-          className="mt-8 p-6 rounded-lg border"
+          className="p-6 rounded-lg border"
           style={{
             background: 'rgba(93, 103, 227, 0.05)',
             borderColor: 'rgba(93, 103, 227, 0.2)',

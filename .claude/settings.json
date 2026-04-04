@@ -3,7 +3,11 @@
     "allow": [
       "Bash(cat /Users/dawar/Code/Lightbear/sardine/src/routes/demo/*.tsx)",
       "Read(//Users/dawar/.claude/plans/**)",
-      "Bash(git -C /Users/dawar/Code/Lightbear/sardine log --oneline -20)"
+      "Bash(git -C /Users/dawar/Code/Lightbear/sardine log --oneline -20)",
+      "Bash(bun info:*)",
+      "Bash(npm view:*)",
+      "Bash(bun add:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

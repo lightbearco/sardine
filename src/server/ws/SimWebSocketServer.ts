@@ -1,0 +1,35 @@
+import { WebSocketServer, WebSocket } from "ws";
+import { connectionManager } from "./ConnectionManager";
+
+export function startSimWebSocketServer(port: number = Number(process.env.WS_PORT) || 3001) {
+  const wss = new WebSocketServer({ port });
+
+  wss.on("connection", (ws: WebSocket) => {
+    console.log("WebSocket client connected");
+
+    ws.on("message", (msg) => {
+      try {
+        const messageStr = msg.toString();
+        const parsed = JSON.parse(messageStr);
+        
+        if (parsed.type === "subscribe" && typeof parsed.channel === "string") {
+          connectionManager.subscribe(ws, parsed.channel);
+          console.log(`Subscribed to channel: ${parsed.channel}`);
+        } else if (parsed.type === "unsubscribe" && typeof parsed.channel === "string") {
+          connectionManager.unsubscribe(ws, parsed.channel);
+          console.log(`Unsubscribed from channel: ${parsed.channel}`);
+        }
+      } catch (err) {
+        console.error("Failed to parse websocket message:", err);
+      }
+    });
+
+    ws.on("close", () => {
+      connectionManager.removeConnection(ws);
+      console.log("WebSocket client disconnected");
+    });
+  });
+
+  console.log(`SimWebSocketServer running on port ${port}`);
+  return wss;
+}

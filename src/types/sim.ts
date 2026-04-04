@@ -1,0 +1,146 @@
+import { z } from "zod";
+import type { Order, Trade } from "#/types/market";
+
+// ── Sim Config ──
+
+export interface SimConfig {
+	isRunning: boolean;
+	currentTick: number;
+	simulatedMarketTime: Date | null;
+	speedMultiplier: number;
+	tickIntervalMs: number;
+	activeGroupSize: number;
+	symbolCount: number;
+	agentCount: number;
+}
+
+// ── World Events ──
+
+export type WorldEventType =
+	| "rate_decision"
+	| "earnings"
+	| "news"
+	| "lawsuit"
+	| "regulatory"
+	| "macro"
+	| "geopolitical"
+	| "sector_rotation"
+	| "custom";
+
+export type WorldEventStatus = "queued" | "applied" | "rejected" | "observed";
+export type WorldEventSource = "chatbot" | "synthetic" | "real_news";
+
+export interface WorldEvent {
+	id: string;
+	type: WorldEventType;
+	title: string;
+	magnitude: number;
+	affectedSymbols: string[];
+	status: WorldEventStatus;
+	source: WorldEventSource;
+	requestedAtTick: number;
+	appliedAtTick: number | null;
+	payload: Record<string, unknown>;
+}
+
+// ── Command Payloads ──
+
+export const injectWorldEventPayloadSchema = z.object({
+	eventId: z.string().min(1).max(128).optional(),
+	type: z.enum([
+		"rate_decision",
+		"earnings",
+		"news",
+		"lawsuit",
+		"regulatory",
+		"macro",
+		"geopolitical",
+		"sector_rotation",
+		"custom",
+	]),
+	title: z.string().min(1).max(200),
+	magnitude: z.number().min(-1).max(1),
+	affectedSymbols: z.array(z.string().min(1)).min(1),
+	source: z.enum(["chatbot", "synthetic", "real_news"]).default("chatbot"),
+	payload: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const startSimCommandPayloadSchema = z.object({});
+export const pauseSimCommandPayloadSchema = z.object({});
+export const setSpeedCommandPayloadSchema = z.object({
+	speedMultiplier: z.number().positive(),
+});
+export const setTickIntervalCommandPayloadSchema = z.object({
+	tickIntervalMs: z.number().int().min(0),
+});
+
+export type InjectWorldEventCommand = z.infer<
+	typeof injectWorldEventPayloadSchema
+>;
+
+export type SimCommandType =
+	| "inject_world_event"
+	| "start"
+	| "pause"
+	| "set_speed"
+	| "set_tick_interval";
+
+export const simCommandTypeSchema = z.enum([
+	"inject_world_event",
+	"start",
+	"pause",
+	"set_speed",
+	"set_tick_interval",
+]);
+
+export const simCommandPayloadSchemaByType = {
+	inject_world_event: injectWorldEventPayloadSchema,
+	start: startSimCommandPayloadSchema,
+	pause: pauseSimCommandPayloadSchema,
+	set_speed: setSpeedCommandPayloadSchema,
+	set_tick_interval: setTickIntervalCommandPayloadSchema,
+} as const;
+
+export interface ParsedSimCommand<TType extends SimCommandType = SimCommandType> {
+	id: number;
+	type: TType;
+	payload: z.infer<(typeof simCommandPayloadSchemaByType)[TType]>;
+}
+
+export interface AgentSignal {
+	agentId: string;
+	agentName: string;
+	side: "buy" | "sell";
+	symbol: string;
+	price: number;
+	qty: number;
+	reasoning: string | null;
+	tick: number;
+}
+
+export interface StagedOrderResult {
+	order: Order;
+	source: "autopilot" | "llm";
+	agentName: string;
+	reasoning: string | null;
+}
+
+export interface TickSummary {
+	durationMs: number;
+	orderCount: number;
+	tradeCount: number;
+	activeAgents: number;
+	simTick: number;
+	simulatedTime: Date;
+	trades: Trade[];
+	isRunning: boolean;
+}
+
+export interface SimOrchestratorState {
+	isRunning: boolean;
+	isTicking: boolean;
+	simTick: number;
+	simulatedTime: Date;
+	activeGroupIndex: number;
+	lastSummary: TickSummary | null;
+}

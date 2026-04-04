@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DemoWsTestRouteImport } from './routes/demo/ws-test'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
 import { Route as DemoTableRouteImport } from './routes/demo/table'
 import { Route as DemoNeonRouteImport } from './routes/demo/neon'
@@ -34,6 +35,11 @@ const AboutRoute = AboutRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DemoWsTestRoute = DemoWsTestRouteImport.update({
+  id: '/demo/ws-test',
+  path: '/demo/ws-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DemoTanstackQueryRoute = DemoTanstackQueryRouteImport.update({
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/demo/neon': typeof DemoNeonRoute
   '/demo/table': typeof DemoTableRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/demo/ws-test': typeof DemoWsTestRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
 }
@@ -100,6 +107,7 @@ export interface FileRoutesByTo {
   '/demo/neon': typeof DemoNeonRoute
   '/demo/table': typeof DemoTableRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/demo/ws-test': typeof DemoWsTestRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
 }
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/demo/neon': typeof DemoNeonRoute
   '/demo/table': typeof DemoTableRoute
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
+  '/demo/ws-test': typeof DemoWsTestRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
 }
@@ -129,6 +138,7 @@ export interface FileRouteTypes {
     | '/demo/neon'
     | '/demo/table'
     | '/demo/tanstack-query'
+    | '/demo/ws-test'
     | '/api/auth/$'
     | '/demo/api/mcp-todos'
   fileRoutesByTo: FileRoutesByTo
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/demo/neon'
     | '/demo/table'
     | '/demo/tanstack-query'
+    | '/demo/ws-test'
     | '/api/auth/$'
     | '/demo/api/mcp-todos'
   id:
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | '/demo/neon'
     | '/demo/table'
     | '/demo/tanstack-query'
+    | '/demo/ws-test'
     | '/api/auth/$'
     | '/demo/api/mcp-todos'
   fileRoutesById: FileRoutesById
@@ -169,6 +181,7 @@ export interface RootRouteChildren {
   DemoNeonRoute: typeof DemoNeonRoute
   DemoTableRoute: typeof DemoTableRoute
   DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
+  DemoWsTestRoute: typeof DemoWsTestRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   DemoApiMcpTodosRoute: typeof DemoApiMcpTodosRoute
 }
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/demo/ws-test': {
+      id: '/demo/ws-test'
+      path: '/demo/ws-test'
+      fullPath: '/demo/ws-test'
+      preLoaderRoute: typeof DemoWsTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/demo/tanstack-query': {
@@ -265,6 +285,7 @@ const rootRouteChildren: RootRouteChildren = {
   DemoNeonRoute: DemoNeonRoute,
   DemoTableRoute: DemoTableRoute,
   DemoTanstackQueryRoute: DemoTanstackQueryRoute,
+  DemoWsTestRoute: DemoWsTestRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   DemoApiMcpTodosRoute: DemoApiMcpTodosRoute,
 }
