@@ -1,11 +1,7 @@
 import EventEmitter from "eventemitter3";
 import type { Trade, Order, LOBSnapshot, OHLCVBar } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
-import type {
-	AgentEvent,
-	SimRuntimeState,
-	WorldEvent,
-} from "#/types/sim";
+import type { AgentEvent, SimRuntimeState, WorldEvent } from "#/types/sim";
 
 export interface EventMap {
 	trade: [trade: Trade];
@@ -17,6 +13,7 @@ export interface EventMap {
 	"agent-event": [event: AgentEvent];
 	"research-published": [note: ResearchNote];
 	"sim-state": [state: SimRuntimeState];
+	divergence: [data: { symbol: string; divergencePct: number }];
 }
 
 export class EventBus {
@@ -43,7 +40,9 @@ export class EventBus {
 		this.emitter.off(event, listener as (...args: unknown[]) => void);
 	}
 
-	removeAllListeners<K extends EventEmitter.EventNames<EventMap>>(event?: K): void {
+	removeAllListeners<K extends EventEmitter.EventNames<EventMap>>(
+		event?: K,
+	): void {
 		this.emitter.removeAllListeners(event);
 	}
 }

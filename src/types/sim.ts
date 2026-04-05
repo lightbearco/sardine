@@ -9,11 +9,7 @@ import type {
 	Trade,
 	TradeData,
 } from "#/types/market";
-import type {
-	AgentStatus,
-	AgentTier,
-	AutopilotDirective,
-} from "#/types/agent";
+import type { AgentStatus, AgentTier, AutopilotDirective } from "#/types/agent";
 import type { ResearchNote } from "#/types/research";
 import type { TraderDistribution } from "#/lib/simulation-session";
 
@@ -97,6 +93,7 @@ export interface SimulationSessionSummary {
 export interface SessionWatchlistEntry {
 	lastBar: OHLCVBarData | null;
 	snapshot: LOBSnapshotData | null;
+	divergencePct?: number | null;
 }
 
 export interface SessionDashboardHydration {
@@ -227,7 +224,9 @@ export const simCommandPayloadSchemaByType = {
 	set_tick_interval: setTickIntervalCommandPayloadSchema,
 } as const;
 
-export interface ParsedSimCommand<TType extends SimCommandType = SimCommandType> {
+export interface ParsedSimCommand<
+	TType extends SimCommandType = SimCommandType,
+> {
 	id: number;
 	type: TType;
 	payload: z.infer<(typeof simCommandPayloadSchemaByType)[TType]>;

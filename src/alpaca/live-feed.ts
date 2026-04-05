@@ -1,4 +1,9 @@
-import { createAlpacaClient, type AlpacaBarSnapshot, type AlpacaClient, type AlpacaQuoteSnapshot } from "#/alpaca/client";
+import {
+	createAlpacaClient,
+	type AlpacaBarSnapshot,
+	type AlpacaClient,
+	type AlpacaQuoteSnapshot,
+} from "#/alpaca/client";
 
 const FALLBACK_SEED_PRICE = 150;
 const FALLBACK_SPREAD = 0.1;
@@ -17,14 +22,16 @@ export interface BootstrapMarketData {
 	symbols: Record<string, BootstrapSymbolMarketData>;
 }
 
-function deriveSeedPrice(quote: AlpacaQuoteSnapshot, bars: AlpacaBarSnapshot[]): number {
+function deriveSeedPrice(
+	quote: AlpacaQuoteSnapshot,
+	bars: AlpacaBarSnapshot[],
+): number {
 	return (
-		quote.lastPrice
-		?? quote.midPrice
-		?? quote.bidPrice
-		?? quote.askPrice
-		?? bars.at(-1)?.close
-		?? FALLBACK_SEED_PRICE
+		quote.lastPrice ??
+		quote.bidPrice ??
+		quote.askPrice ??
+		bars.at(-1)?.close ??
+		FALLBACK_SEED_PRICE
 	);
 }
 
@@ -49,9 +56,12 @@ export function buildBootstrapMarketData(input: {
 				const seedPrice = deriveSeedPrice(quote, history);
 				const spread = quote.spread ?? FALLBACK_SPREAD;
 				const halfSpread = spread / 2;
-				const bidPrice = quote.bidPrice ?? Number((seedPrice - halfSpread).toFixed(4));
-				const askPrice = quote.askPrice ?? Number((seedPrice + halfSpread).toFixed(4));
-				const midPrice = quote.midPrice ?? Number(((bidPrice + askPrice) / 2).toFixed(4));
+				const bidPrice =
+					quote.bidPrice ?? Number((seedPrice - halfSpread).toFixed(4));
+				const askPrice =
+					quote.askPrice ?? Number((seedPrice + halfSpread).toFixed(4));
+				const midPrice =
+					quote.midPrice ?? Number(((bidPrice + askPrice) / 2).toFixed(4));
 				const lastPrice = quote.lastPrice ?? history.at(-1)?.close ?? midPrice;
 
 				return [

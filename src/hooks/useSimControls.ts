@@ -5,7 +5,7 @@ import Decimal from "decimal.js";
 import { db } from "#/db/index";
 import { commands } from "#/db/schema";
 import type { Trade, TradeData } from "#/types/market";
-import { buildSessionChannel } from "#/types/ws";
+import { buildSessionChannel, type SimChannelMessage } from "#/types/ws";
 import type {
 	SimRuntimeState,
 	SimRuntimeStateData,
@@ -24,7 +24,9 @@ export const playSimFn = createServerFn({ method: "POST" })
 		commandInputSchema.parse(data),
 	)
 	.handler(async ({ data }) => {
-		await db.insert(commands).values({ sessionId: data.sessionId, type: "start" });
+		await db
+			.insert(commands)
+			.values({ sessionId: data.sessionId, type: "start" });
 	});
 
 export const pauseSimFn = createServerFn({ method: "POST" })
@@ -32,7 +34,9 @@ export const pauseSimFn = createServerFn({ method: "POST" })
 		commandInputSchema.parse(data),
 	)
 	.handler(async ({ data }) => {
-		await db.insert(commands).values({ sessionId: data.sessionId, type: "pause" });
+		await db
+			.insert(commands)
+			.values({ sessionId: data.sessionId, type: "pause" });
 	});
 
 export const stepSimFn = createServerFn({ method: "POST" })
@@ -40,7 +44,9 @@ export const stepSimFn = createServerFn({ method: "POST" })
 		commandInputSchema.parse(data),
 	)
 	.handler(async ({ data }) => {
-		await db.insert(commands).values({ sessionId: data.sessionId, type: "step" });
+		await db
+			.insert(commands)
+			.values({ sessionId: data.sessionId, type: "step" });
 	});
 
 const setSpeedSchema = z.object({
@@ -78,8 +84,10 @@ export function useSimControls() {
 
 		const unsubscribe = subscribe(
 			buildSessionChannel("sim", sessionId),
-			(state: SimRuntimeState) => {
-			setSimState(state);
+			(msg: SimChannelMessage) => {
+				if (msg.type === "runtime_state") {
+					setSimState(msg.payload);
+				}
 			},
 		);
 

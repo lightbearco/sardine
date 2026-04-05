@@ -6,6 +6,7 @@ export interface WatchlistSummaryPayload {
 	high: number | null;
 	low: number | null;
 	spread: number | null;
+	divergencePct?: number | null;
 	lastBar?: OHLCVBarData;
 	snapshot?: LOBSnapshotData;
 	lastTrade?: TradeData;

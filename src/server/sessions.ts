@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getActiveGroupIndex } from "#/agents/batch-scheduler";
 import { db } from "#/db/index";
@@ -60,9 +60,20 @@ function buildSessionName(now: Date): string {
 	return `Simulation ${SESSION_NAME_FORMATTER.format(now)}`;
 }
 
-function toSnapshot(row: typeof orderBookSnapshots.$inferSelect): LOBSnapshotData {
-	const levels = (raw: { price: number; qty: number; orderCount: number }[] | null | undefined) =>
-		(raw ?? []).map((level) => ({ price: level.price, qty: level.qty, orderCount: level.orderCount }));
+function toSnapshot(
+	row: typeof orderBookSnapshots.$inferSelect,
+): LOBSnapshotData {
+	const levels = (
+		raw:
+			| { price: number; qty: number; orderCount: number }[]
+			| null
+			| undefined,
+	) =>
+		(raw ?? []).map((level) => ({
+			price: level.price,
+			qty: level.qty,
+			orderCount: level.orderCount,
+		}));
 
 	return {
 		symbol: row.symbol,
@@ -114,7 +125,8 @@ function mapSessionSummary(
 		tickIntervalMs: session.tickIntervalMs,
 		simulatedTickDuration: session.simulatedTickDuration,
 		traderDistribution:
-			session.traderDistribution ?? buildDefaultTraderDistribution(session.agentCount),
+			session.traderDistribution ??
+			buildDefaultTraderDistribution(session.agentCount),
 		currentTick,
 		createdAt: session.createdAt ?? null,
 		updatedAt: session.updatedAt ?? null,
@@ -123,7 +135,9 @@ function mapSessionSummary(
 	};
 }
 
-function mapResearchNoteRow(row: typeof researchNotes.$inferSelect): ResearchNote {
+function mapResearchNoteRow(
+	row: typeof researchNotes.$inferSelect,
+): ResearchNote {
 	return {
 		id: row.noteId,
 		agentId: row.agentId,
@@ -157,7 +171,9 @@ function decimalLikeToNumber(
 	return value.toNumber();
 }
 
-function mapPersistedTickSummary(summary: TickSummary | null | undefined): TickSummaryData | null {
+function mapPersistedTickSummary(
+	summary: TickSummary | null | undefined,
+): TickSummaryData | null {
 	if (!summary) {
 		return null;
 	}
@@ -165,7 +181,9 @@ function mapPersistedTickSummary(summary: TickSummary | null | undefined): TickS
 	return {
 		...summary,
 		simulatedTime: new Date(summary.simulatedTime),
-		trades: (summary.trades ?? []).map((trade) => serializeTradeForSummary(trade)),
+		trades: (summary.trades ?? []).map((trade) =>
+			serializeTradeForSummary(trade),
+		),
 	};
 }
 
@@ -244,7 +262,9 @@ async function deleteSessionObservability(sessionId: string): Promise<void> {
 	});
 }
 
-export async function hardDeleteSimulationSession(sessionId: string): Promise<void> {
+export async function hardDeleteSimulationSession(
+	sessionId: string,
+): Promise<void> {
 	await deleteSessionObservability(sessionId);
 
 	await db
@@ -312,11 +332,16 @@ export async function createSimulationSession(
 	return { sessionId };
 }
 
-export async function listSimulationSessions(): Promise<SimulationSessionSummary[]> {
+export async function listSimulationSessions(): Promise<
+	SimulationSessionSummary[]
+> {
 	const sessions = await db
 		.select()
 		.from(simulationSessions)
-		.orderBy(desc(simulationSessions.updatedAt), desc(simulationSessions.createdAt));
+		.orderBy(
+			desc(simulationSessions.updatedAt),
+			desc(simulationSessions.createdAt),
+		);
 
 	if (sessions.length === 0) {
 		return [];
@@ -343,14 +368,19 @@ export async function listRunnableSimulationSessions(): Promise<
 	const sessions = await db
 		.select()
 		.from(simulationSessions)
-		.where(
-			inArray(simulationSessions.status, ["pending", "active"]),
+		.where(inArray(simulationSessions.status, ["pending", "active"]))
+		.orderBy(
+			desc(simulationSessions.updatedAt),
+			desc(simulationSessions.createdAt),
 		)
-		.orderBy(desc(simulationSessions.updatedAt), desc(simulationSessions.createdAt))
 		.limit(100);
 
-	const activeSessions = sessions.filter((session) => session.status === "active");
-	const pendingSessions = sessions.filter((session) => session.status === "pending");
+	const activeSessions = sessions.filter(
+		(session) => session.status === "active",
+	);
+	const pendingSessions = sessions.filter(
+		(session) => session.status === "pending",
+	);
 
 	return [...activeSessions, ...pendingSessions];
 }
@@ -362,11 +392,16 @@ export async function listDeletingSimulationSessions(): Promise<
 		.select()
 		.from(simulationSessions)
 		.where(eq(simulationSessions.status, "deleting"))
-		.orderBy(desc(simulationSessions.updatedAt), desc(simulationSessions.createdAt))
+		.orderBy(
+			desc(simulationSessions.updatedAt),
+			desc(simulationSessions.createdAt),
+		)
 		.limit(100);
 }
 
-export async function markSimulationSessionActive(sessionId: string): Promise<void> {
+export async function markSimulationSessionActive(
+	sessionId: string,
+): Promise<void> {
 	const now = new Date();
 
 	await db
@@ -384,7 +419,9 @@ export async function markSimulationSessionActive(sessionId: string): Promise<vo
 		);
 }
 
-export async function markSimulationSessionFailed(sessionId: string): Promise<void> {
+export async function markSimulationSessionFailed(
+	sessionId: string,
+): Promise<void> {
 	const now = new Date();
 
 	await db
@@ -422,54 +459,62 @@ export async function getSessionDashboardHydration(input: {
 		.limit(1);
 
 	const supportedSymbols = getSupportedSessionSymbols(session.symbols);
-	const [snapshotRows, noteRows, agentRows, agentEventRows, latestBarResults] =
-		await Promise.all([
-			db
-				.select()
-				.from(orderBookSnapshots)
-				.where(eq(orderBookSnapshots.sessionId, input.sessionId)),
-			db
-				.select()
-				.from(researchNotes)
-				.where(eq(researchNotes.sessionId, input.sessionId))
-				.orderBy(
-					desc(researchNotes.publishedAtTick),
-					desc(researchNotes.createdAt),
-				)
-				.limit(25),
-			db
-				.select()
-				.from(agents)
-				.where(eq(agents.sessionId, input.sessionId))
-				.orderBy(agents.name),
-			db
-				.select()
-				.from(agentEvents)
-				.where(eq(agentEvents.sessionId, input.sessionId))
-				.orderBy(desc(agentEvents.tick), desc(agentEvents.createdAt))
-				.limit(200),
-				Promise.all(
-					supportedSymbols.map(async (symbol) => {
-					const [row] = await db
-						.select()
-						.from(ticks)
-						.where(
-							and(
-								eq(ticks.sessionId, input.sessionId),
-								eq(ticks.symbol, symbol),
-							),
-						)
-						.orderBy(desc(ticks.tick), desc(ticks.createdAt))
-						.limit(1);
+	const [
+		snapshotRows,
+		noteRows,
+		agentRows,
+		agentEventRows,
+		latestBarResults,
+		divergenceRows,
+	] = await Promise.all([
+		db
+			.select()
+			.from(orderBookSnapshots)
+			.where(eq(orderBookSnapshots.sessionId, input.sessionId)),
+		db
+			.select()
+			.from(researchNotes)
+			.where(eq(researchNotes.sessionId, input.sessionId))
+			.orderBy(
+				desc(researchNotes.publishedAtTick),
+				desc(researchNotes.createdAt),
+			)
+			.limit(25),
+		db
+			.select()
+			.from(agents)
+			.where(eq(agents.sessionId, input.sessionId))
+			.orderBy(agents.name),
+		db
+			.select()
+			.from(agentEvents)
+			.where(eq(agentEvents.sessionId, input.sessionId))
+			.orderBy(desc(agentEvents.tick), desc(agentEvents.createdAt))
+			.limit(200),
+		Promise.all(
+			supportedSymbols.map(async (symbol) => {
+				const [row] = await db
+					.select()
+					.from(ticks)
+					.where(
+						and(eq(ticks.sessionId, input.sessionId), eq(ticks.symbol, symbol)),
+					)
+					.orderBy(desc(ticks.tick), desc(ticks.createdAt))
+					.limit(1);
 
-					if (!row) {
-						return null;
-					}
+				if (!row) {
+					return null;
+				}
 
-						return [symbol, toBar(row)] as const;
-					}),
-				),
-		]);
+				return [symbol, toBar(row)] as const;
+			}),
+		),
+		db
+			.execute<{ symbol: string; divergencePct: number }>(
+				sql`SELECT DISTINCT ON (symbol) symbol, divergence_pct FROM divergence_log WHERE session_id = ${input.sessionId} ORDER BY symbol, tick DESC`,
+			)
+			.then((result) => result.rows),
+	]);
 
 	const latestBarBySymbol = new Map(
 		latestBarResults.filter(
@@ -481,19 +526,25 @@ export async function getSessionDashboardHydration(input: {
 		snapshotRows.map((row) => [row.symbol, toSnapshot(row)]),
 	);
 
+	const divergenceBySymbol = new Map(
+		divergenceRows.map((row) => [row.symbol, row.divergencePct]),
+	);
+
 	const watchlist: Record<string, SessionWatchlistEntry> = Object.fromEntries(
 		supportedSymbols.map((symbol) => [
 			symbol,
 			{
 				lastBar: latestBarBySymbol.get(symbol) ?? null,
 				snapshot: snapshotBySymbol.get(symbol) ?? null,
+				divergencePct: divergenceBySymbol.get(symbol) ?? null,
 			},
 		]),
 	);
-	const groupCount =
-		Math.max(0, ...agentRows.map((row) => row.llmGroup)) + 1;
+	const groupCount = Math.max(0, ...agentRows.map((row) => row.llmGroup)) + 1;
 	const activeGroupIndex =
-		configRow === undefined ? 0 : getActiveGroupIndex(configRow.currentTick, groupCount);
+		configRow === undefined
+			? 0
+			: getActiveGroupIndex(configRow.currentTick, groupCount);
 	const activeGroupSize = agentRows.filter(
 		(row) => row.status === "active" && row.llmGroup === activeGroupIndex,
 	).length;
@@ -509,7 +560,9 @@ export async function getSessionDashboardHydration(input: {
 						isTicking: false,
 						simTick: configRow.currentTick,
 						simulatedTime:
-							configRow.simulatedMarketTime ?? configRow.updatedAt ?? new Date(),
+							configRow.simulatedMarketTime ??
+							configRow.updatedAt ??
+							new Date(),
 						activeGroupIndex,
 						speedMultiplier: configRow.speedMultiplier,
 						tickIntervalMs: configRow.tickIntervalMs,
@@ -583,7 +636,9 @@ export async function getSessionSymbolHydration(input: {
 	};
 }
 
-export async function hasSimulationSession(sessionId: string): Promise<boolean> {
+export async function hasSimulationSession(
+	sessionId: string,
+): Promise<boolean> {
 	const [session] = await db
 		.select({ id: simulationSessions.id })
 		.from(simulationSessions)
@@ -633,7 +688,9 @@ export function serializeLobSnapshot(snapshot: LOBSnapshot): LOBSnapshotData {
 		bids: serializeOrderBookLevels(snapshot.bids),
 		asks: serializeOrderBookLevels(snapshot.asks),
 		lastPrice:
-			snapshot.lastPrice === null ? null : decimalLikeToNumber(snapshot.lastPrice),
+			snapshot.lastPrice === null
+				? null
+				: decimalLikeToNumber(snapshot.lastPrice),
 		spread:
 			snapshot.spread === null ? null : decimalLikeToNumber(snapshot.spread),
 	};
@@ -653,8 +710,12 @@ export function serializeOrderBookSnapshot(input: {
 		tick: input.tick,
 		bids: normalizeLevels(input.snapshot.bids),
 		asks: normalizeLevels(input.snapshot.asks),
-		lastPrice: input.snapshot.lastPrice === null ? null : input.snapshot.lastPrice.toNumber(),
-		spread: input.snapshot.spread === null ? null : input.snapshot.spread.toNumber(),
+		lastPrice:
+			input.snapshot.lastPrice === null
+				? null
+				: input.snapshot.lastPrice.toNumber(),
+		spread:
+			input.snapshot.spread === null ? null : input.snapshot.spread.toNumber(),
 		updatedAt: new Date(),
 	};
 }

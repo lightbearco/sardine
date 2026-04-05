@@ -27,7 +27,10 @@ import { SimClock } from "#/engine/sim/SimClock";
 import { SimOrchestrator } from "#/engine/sim/SimOrchestrator";
 import { DEV_TICKERS, SIM_DEFAULTS } from "#/lib/constants";
 import { buildDefaultTraderDistribution } from "#/lib/simulation-session";
-import { researchAgent, researchCycleResultSchema } from "#/mastra/agents/research-agent";
+import {
+	researchAgent,
+	researchCycleResultSchema,
+} from "#/mastra/agents/research-agent";
 import { cloneResearchRequestContext } from "#/mastra/research-context";
 import { tradingAgent } from "#/mastra/agents/trading-agent";
 import type { AutopilotDirective } from "#/types/agent";
@@ -44,9 +47,35 @@ import {
 	serializeOhlcvBar,
 	serializeTrade,
 } from "#/server/sessions";
-import { buildSessionChannel, buildSymbolChannel } from "#/types/ws";
+import {
+	buildSessionChannel,
+	buildSymbolChannel,
+	type SimChannelMessage,
+} from "#/types/ws";
 import { broadcaster } from "./ws/broadcaster";
 import { startSimWebSocketServer } from "./ws/SimWebSocketServer";
+
+function broadcastSimRuntimeState(
+	sessionId: string,
+	state: import("#/types/sim").SimRuntimeState,
+): void {
+	const message: SimChannelMessage = {
+		type: "runtime_state",
+		payload: state,
+	};
+	broadcaster.broadcast(buildSessionChannel("sim", sessionId), message);
+}
+
+function broadcastSessionStatus(
+	sessionId: string,
+	status: "completed" | "failed",
+): void {
+	const message: SimChannelMessage = {
+		type: "session_status_changed",
+		payload: { sessionId, status },
+	};
+	broadcaster.broadcast(buildSessionChannel("sim", sessionId), message);
+}
 
 type ResearchAgentLike = {
 	generate(
@@ -69,8 +98,9 @@ type SimulationRuntime = {
 	disposePromise: Promise<void> | null;
 };
 
-type RunnableSimulationSession =
-	Awaited<ReturnType<typeof listRunnableSimulationSessions>>[number];
+type RunnableSimulationSession = Awaited<
+	ReturnType<typeof listRunnableSimulationSessions>
+>[number];
 type PersistedSimConfigRow = typeof simConfigTable.$inferSelect;
 type PersistedAgentRow = typeof agentsTable.$inferSelect;
 type PersistedOpenOrderRow = typeof ordersTable.$inferSelect;
@@ -157,19 +187,14 @@ function wireRuntimeBroadcasts(sessionId: string, eventBus: EventBus): void {
 			lastBar: patch.lastBar ?? current.lastBar,
 			snapshot: patch.snapshot ?? current.snapshot,
 			lastTrade: patch.lastTrade ?? current.lastTrade,
-			high:
-				patch.high ?? patch.lastBar?.high ?? current.high,
-			low:
-				patch.low ?? patch.lastBar?.low ?? current.low,
+			high: patch.high ?? patch.lastBar?.high ?? current.high,
+			low: patch.low ?? patch.lastBar?.low ?? current.low,
 			lastPrice:
 				patch.lastPrice ??
 				patch.lastTrade?.price ??
 				patch.lastBar?.close ??
 				current.lastPrice,
-			spread:
-				patch.spread ??
-				patch.snapshot?.spread ??
-				current.spread,
+			spread: patch.spread ?? patch.snapshot?.spread ?? current.spread,
 			updatedAt: now,
 		};
 		watchlistSummaries.set(symbol, merged);
@@ -228,8 +253,17 @@ function wireRuntimeBroadcasts(sessionId: string, eventBus: EventBus): void {
 	});
 
 	eventBus.on("sim-state", (state) => {
-		broadcaster.broadcast(buildSessionChannel("sim", sessionId), state);
+		broadcastSimRuntimeState(sessionId, state);
 	});
+
+	eventBus.on(
+		"divergence",
+		(data: { symbol: string; divergencePct: number }) => {
+			emitWatchlistUpdate(data.symbol, {
+				divergencePct: data.divergencePct,
+			});
+		},
+	);
 }
 
 async function createBootstrapMarketData(symbols: string[]): Promise<{
@@ -287,8 +321,7 @@ function resolveSessionRuntimeConfig(session: RunnableSimulationSession): {
 		simulatedTickDuration:
 			session.simulatedTickDuration ?? SIM_DEFAULTS.simulatedTickDuration,
 		traderDistribution:
-			session.traderDistribution ??
-			buildDefaultTraderDistribution(agentCount),
+			session.traderDistribution ?? buildDefaultTraderDistribution(agentCount),
 	};
 }
 
@@ -319,26 +352,38 @@ function logTickSummary(sessionId: string, summary: TickSummary): void {
 	logBroadcastCounters(sessionId);
 }
 
-async function waitForRuntimeToSettle(runtime: SimulationRuntime): Promise<void> {
+async function waitForRuntimeToSettle(
+	runtime: SimulationRuntime,
+): Promise<void> {
 	while (runtime.orchestrator.getState().isTicking) {
 		await sleep(25);
 	}
 }
 
-export async function disposeRuntime(runtime: SimulationRuntime): Promise<void> {
+export async function disposeRuntime(
+	runtime: SimulationRuntime,
+	options?: { reason?: "completed" | "suspended" },
+): Promise<void> {
 	if (runtime.disposePromise) {
 		await runtime.disposePromise;
 		return;
 	}
 
+	const isSuspended = options?.reason === "suspended";
+
 	runtime.disposePromise = (async () => {
 		await waitForRuntimeToSettle(runtime);
 		await runtime.orchestrator.stop();
+		if (!isSuspended) {
+			broadcastSessionStatus(runtime.sessionId, "completed");
+		}
 		await waitForRuntimeToSettle(runtime);
 		runtime.eventBus.removeAllListeners();
 		runtime.publicationBus.clear();
 		clearBroadcastCounters(runtime.sessionId);
-		broadcaster.clearSession(runtime.sessionId);
+		if (!isSuspended) {
+			broadcaster.clearSession(runtime.sessionId);
+		}
 	})();
 
 	try {
@@ -355,30 +400,42 @@ async function loadPersistedSessionState(sessionId: string): Promise<{
 	researchNotes: PersistedResearchNoteRow[];
 	agentEventCount: number;
 }> {
-	const [simConfigRows, agentRows, openOrderRows, researchNoteRows, agentEventRows] =
-		await Promise.all([
-			db.select().from(simConfigTable).where(eq(simConfigTable.sessionId, sessionId)).limit(1),
-			db.select().from(agentsTable).where(eq(agentsTable.sessionId, sessionId)),
-			db
-				.select()
-				.from(ordersTable)
-				.where(
-					and(
-						eq(ordersTable.sessionId, sessionId),
-						inArray(ordersTable.status, ["pending", "open", "partial"]),
-					),
-				)
-				.orderBy(asc(ordersTable.tick), asc(ordersTable.createdAt)),
-			db
-				.select()
-				.from(researchNotesTable)
-				.where(eq(researchNotesTable.sessionId, sessionId))
-				.orderBy(asc(researchNotesTable.publishedAtTick), asc(researchNotesTable.createdAt)),
-			db
-				.select({ eventId: agentEventsTable.eventId })
-				.from(agentEventsTable)
-				.where(eq(agentEventsTable.sessionId, sessionId)),
-		]);
+	const [
+		simConfigRows,
+		agentRows,
+		openOrderRows,
+		researchNoteRows,
+		agentEventRows,
+	] = await Promise.all([
+		db
+			.select()
+			.from(simConfigTable)
+			.where(eq(simConfigTable.sessionId, sessionId))
+			.limit(1),
+		db.select().from(agentsTable).where(eq(agentsTable.sessionId, sessionId)),
+		db
+			.select()
+			.from(ordersTable)
+			.where(
+				and(
+					eq(ordersTable.sessionId, sessionId),
+					inArray(ordersTable.status, ["pending", "open", "partial"]),
+				),
+			)
+			.orderBy(asc(ordersTable.tick), asc(ordersTable.createdAt)),
+		db
+			.select()
+			.from(researchNotesTable)
+			.where(eq(researchNotesTable.sessionId, sessionId))
+			.orderBy(
+				asc(researchNotesTable.publishedAtTick),
+				asc(researchNotesTable.createdAt),
+			),
+		db
+			.select({ eventId: agentEventsTable.eventId })
+			.from(agentEventsTable)
+			.where(eq(agentEventsTable.sessionId, sessionId)),
+	]);
 
 	const simConfig = simConfigRows[0];
 	if (!simConfig) {
@@ -421,12 +478,9 @@ async function bootstrapSimulationRuntime(
 
 	const eventBus = new EventBus();
 	const publicationBus = new PublicationBus();
-	const simClock = new SimClock(
-		simulatedTickDuration,
-		{
-			initialTick: bootstrap.initialTick,
-		},
-	);
+	const simClock = new SimClock(simulatedTickDuration, {
+		initialTick: bootstrap.initialTick,
+	});
 	const orchestrator = new SimOrchestrator(
 		bootstrap.matchingEngine,
 		bootstrap.agentRegistry,
@@ -445,10 +499,7 @@ async function bootstrapSimulationRuntime(
 	wireRuntimeBroadcasts(sessionId, eventBus);
 	await markSimulationSessionActive(sessionId);
 	await orchestrator.start();
-	broadcaster.broadcast(
-		buildSessionChannel("sim", sessionId),
-		orchestrator.getRuntimeState(),
-	);
+	broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
 
 	logRuntimeEvent(
 		sessionId,
@@ -494,7 +545,8 @@ async function resumeSimulationRuntime(
 			simConfig: {
 				isRunning: persistedState.simConfig.isRunning,
 				currentTick: persistedState.simConfig.currentTick,
-				simulatedMarketTime: persistedState.simConfig.simulatedMarketTime ?? null,
+				simulatedMarketTime:
+					persistedState.simConfig.simulatedMarketTime ?? null,
 				speedMultiplier: persistedState.simConfig.speedMultiplier,
 				tickIntervalMs: persistedState.simConfig.tickIntervalMs,
 				lastSummary: persistedState.simConfig.lastSummary,
@@ -524,7 +576,9 @@ async function resumeSimulationRuntime(
 				filledQuantity: row.filledQuantity,
 				llmReasoning: row.llmReasoning,
 			})),
-			researchNotes: persistedState.researchNotes.map((row) => toResearchNote(row)),
+			researchNotes: persistedState.researchNotes.map((row) =>
+				toResearchNote(row),
+			),
 			agentEventCount: persistedState.agentEventCount,
 		},
 	});
@@ -563,10 +617,7 @@ async function resumeSimulationRuntime(
 	});
 
 	wireRuntimeBroadcasts(sessionId, eventBus);
-	broadcaster.broadcast(
-		buildSessionChannel("sim", sessionId),
-		orchestrator.getRuntimeState(),
-	);
+	broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
 	logRuntimeEvent(
 		sessionId,
 		`resumed tick=${restored.runtimeState.currentTick} running=${restored.runtimeState.isRunning} openOrders=${persistedState.openOrders.length}`,
@@ -597,9 +648,7 @@ export function getMaxLiveSessions(
 	return Math.floor(parsed);
 }
 
-export function splitRunnableSessions(
-	sessions: RunnableSimulationSession[],
-): {
+export function splitRunnableSessions(sessions: RunnableSimulationSession[]): {
 	activeSessions: RunnableSimulationSession[];
 	pendingSessions: RunnableSimulationSession[];
 } {
@@ -661,36 +710,41 @@ export function buildDivergenceRows(input: {
 		}
 	>;
 }) {
-	return Array.from(input.referencePrices.entries()).flatMap(([symbol, simPrice]) => {
-		const quote = input.quotes.get(symbol);
-		const realPrice =
-			quote?.lastPrice ?? quote?.midPrice ?? quote?.bidPrice ?? quote?.askPrice;
+	return Array.from(input.referencePrices.entries()).flatMap(
+		([symbol, simPrice]) => {
+			const quote = input.quotes.get(symbol);
+			const realPrice =
+				quote?.lastPrice ??
+				quote?.midPrice ??
+				quote?.bidPrice ??
+				quote?.askPrice;
 
-		if (realPrice === null || realPrice === undefined || realPrice <= 0) {
-			return [];
-		}
+			if (realPrice === null || realPrice === undefined || realPrice <= 0) {
+				return [];
+			}
 
-		const simPriceNumber = simPrice.toNumber();
-		const divergencePct = Number(
-			new Decimal(simPriceNumber)
-				.minus(realPrice)
-				.div(realPrice)
-				.mul(100)
-				.toDecimalPlaces(4)
-				.toString(),
-		);
+			const simPriceNumber = simPrice.toNumber();
+			const divergencePct = Number(
+				new Decimal(simPriceNumber)
+					.minus(realPrice)
+					.div(realPrice)
+					.mul(100)
+					.toDecimalPlaces(4)
+					.toString(),
+			);
 
-		return [
-			{
-				sessionId: input.sessionId,
-				tick: input.tick,
-				symbol,
-				simPrice: simPriceNumber,
-				realPrice,
-				divergencePct,
-			},
-		];
-	});
+			return [
+				{
+					sessionId: input.sessionId,
+					tick: input.tick,
+					symbol,
+					simPrice: simPriceNumber,
+					realPrice,
+					divergencePct,
+				},
+			];
+		},
+	);
 }
 
 async function persistDivergenceLog(runtime: SimulationRuntime): Promise<void> {
@@ -709,6 +763,12 @@ async function persistDivergenceLog(runtime: SimulationRuntime): Promise<void> {
 
 		if (rows.length > 0) {
 			await db.insert(divergenceLogTable).values(rows);
+			for (const row of rows) {
+				runtime.eventBus.emit("divergence", {
+					symbol: row.symbol,
+					divergencePct: row.divergencePct,
+				});
+			}
 		}
 	} catch (error) {
 		console.warn(
@@ -722,7 +782,10 @@ export function shouldRunResearchCycle(simTick: number): boolean {
 	return simTick > 0 && simTick % 20 === 0;
 }
 
-function buildResearchPrompt(worker: ResearchAgentWorker, simTick: number): string {
+function buildResearchPrompt(
+	worker: ResearchAgentWorker,
+	simTick: number,
+): string {
 	return [
 		`Simulation tick: ${simTick}`,
 		`You are covering the ${worker.focus} desk this cycle.`,
@@ -801,10 +864,7 @@ async function processRuntimeCycle(
 		}
 
 		if (controlOutcome.processed) {
-			broadcaster.broadcast(
-				buildSessionChannel("sim", sessionId),
-				orchestrator.getRuntimeState(),
-			);
+			broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
 			if (orchestrator.getState().isRunning) {
 				runtime.nextTickAtMs = Date.now();
 				return;
@@ -814,14 +874,13 @@ async function processRuntimeCycle(
 		if (controlOutcome.stepCount > 0) {
 			for (let index = 0; index < controlOutcome.stepCount; index += 1) {
 				try {
-					const summary = await orchestrator.tick({ skipPendingCommands: true });
+					const summary = await orchestrator.tick({
+						skipPendingCommands: true,
+					});
 					for (const message of orchestrator.consumeRuntimeLogMessages()) {
 						logRuntimeEvent(sessionId, message);
 					}
-					broadcaster.broadcast(
-						buildSessionChannel("sim", sessionId),
-						orchestrator.getRuntimeState(),
-					);
+					broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
 					await persistDivergenceLog(runtime);
 					await runResearchCycle(
 						researchWorkers,
@@ -852,10 +911,7 @@ async function processRuntimeCycle(
 		for (const message of orchestrator.consumeRuntimeLogMessages()) {
 			logRuntimeEvent(sessionId, message);
 		}
-		broadcaster.broadcast(
-			buildSessionChannel("sim", sessionId),
-			orchestrator.getRuntimeState(),
-		);
+		broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
 		await persistDivergenceLog(runtime);
 		await runResearchCycle(
 			researchWorkers,
@@ -870,8 +926,10 @@ async function processRuntimeCycle(
 	}
 
 	const elapsed = Date.now() - tickStartedAt;
-	const configuredInterval =
-		envIntervalOverride ?? orchestrator.getRuntimeState().tickIntervalMs;
+	const runtimeState = orchestrator.getRuntimeState();
+	const baseInterval = envIntervalOverride ?? runtimeState.tickIntervalMs;
+	const speedMultiplier = Math.max(runtimeState.speedMultiplier, 0.001);
+	const configuredInterval = baseInterval / speedMultiplier;
 	const delay = Math.max(0, configuredInterval - elapsed);
 	runtime.nextTickAtMs = Date.now() + delay;
 }
@@ -906,7 +964,7 @@ async function main() {
 					continue;
 				}
 
-				await disposeRuntime(runtime);
+				await disposeRuntime(runtime, { reason: "suspended" });
 				runtimes.delete(runtimeId);
 				logRuntimeEvent(runtimeId, "unloaded");
 			}
@@ -941,6 +999,7 @@ async function main() {
 				runtimes.set(session.id, runtime);
 			} catch (error) {
 				console.error(`Failed to resume session ${session.id}:`, error);
+				broadcastSessionStatus(session.id, "failed");
 				await markSimulationSessionFailed(session.id);
 			}
 		}
@@ -957,6 +1016,7 @@ async function main() {
 				runtimes.set(session.id, runtime);
 			} catch (error) {
 				console.error(`Failed to bootstrap session ${session.id}:`, error);
+				broadcastSessionStatus(session.id, "failed");
 				await markSimulationSessionFailed(session.id);
 			}
 		}

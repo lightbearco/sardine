@@ -1,6 +1,10 @@
 import type { OHLCVBar, LOBSnapshot, Trade } from "./market";
 import type { ResearchNote } from "./research";
-import type { AgentEvent, SimRuntimeState } from "./sim";
+import type {
+	AgentEvent,
+	SimulationSessionStatus,
+	SimRuntimeState,
+} from "./sim";
 import type { WatchlistSummaryPayload } from "./watchlist";
 
 // ── Message Types ──
@@ -13,6 +17,7 @@ export enum WsMessageType {
 	AgentSignal = "agent:signal",
 	ResearchPublished = "research:published",
 	SimState = "sim:state",
+	SessionStatusChanged = "session:status",
 	WorldEventApplied = "world_event:applied",
 
 	// Client → Server
@@ -77,6 +82,19 @@ export interface SimStateMessage {
 	data: SimRuntimeState;
 }
 
+export interface SessionStatusChangedMessage {
+	type: WsMessageType.SessionStatusChanged;
+	channel: `sim:${string}`;
+	data: { sessionId: string; status: SimulationSessionStatus };
+}
+
+export type SimChannelMessage =
+	| { type: "runtime_state"; payload: SimRuntimeState }
+	| {
+			type: "session_status_changed";
+			payload: { sessionId: string; status: SimulationSessionStatus };
+	  };
+
 export interface WorldEventAppliedMessage {
 	type: WsMessageType.WorldEventApplied;
 	channel: "world_events";
@@ -113,6 +131,7 @@ export type WsServerMessage =
 	| AgentSignalMessage
 	| ResearchPublishedMessage
 	| SimStateMessage
+	| SessionStatusChangedMessage
 	| WorldEventAppliedMessage;
 
 export type WsClientMessage =
@@ -122,11 +141,7 @@ export type WsClientMessage =
 
 export type WsMessage = WsServerMessage | WsClientMessage;
 
-type SessionChannelKind =
-	| "watchlist"
-	| "agents"
-	| "research"
-	| "sim";
+type SessionChannelKind = "watchlist" | "agents" | "research" | "sim";
 type SymbolChannelKind = "ohlcv" | "lob" | "trades";
 
 export type ParsedWsChannel =
@@ -161,12 +176,12 @@ export function parseWsChannel(channel: string): ParsedWsChannel | null {
 	}
 
 	if (
-		(kind === "watchlist"
-			|| kind === "agents"
-			|| kind === "research"
-			|| kind === "sim")
-		&& isNonEmptySegment(sessionId)
-		&& symbol === undefined
+		(kind === "watchlist" ||
+			kind === "agents" ||
+			kind === "research" ||
+			kind === "sim") &&
+		isNonEmptySegment(sessionId) &&
+		symbol === undefined
 	) {
 		return {
 			kind,
@@ -176,9 +191,9 @@ export function parseWsChannel(channel: string): ParsedWsChannel | null {
 	}
 
 	if (
-		(kind === "ohlcv" || kind === "lob" || kind === "trades")
-		&& isNonEmptySegment(sessionId)
-		&& isNonEmptySegment(symbol)
+		(kind === "ohlcv" || kind === "lob" || kind === "trades") &&
+		isNonEmptySegment(sessionId) &&
+		isNonEmptySegment(symbol)
 	) {
 		return {
 			kind,

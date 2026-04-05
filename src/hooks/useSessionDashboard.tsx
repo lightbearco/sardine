@@ -8,14 +8,20 @@ import {
 	useState,
 	type ReactNode,
 } from "react";
+import { useRouter } from "@tanstack/react-router";
 import type { ResearchNote } from "#/types/research";
 import type {
 	AgentEvent,
 	SessionDashboardHydration,
 	SessionSymbolHydration,
+	SimulationSessionStatus,
 	SimulationSessionSummary,
 } from "#/types/sim";
-import { buildSessionChannel, buildSymbolChannel } from "#/types/ws";
+import {
+	buildSessionChannel,
+	buildSymbolChannel,
+	type SimChannelMessage,
+} from "#/types/ws";
 import type { WatchlistSummaryPayload } from "#/types/watchlist";
 import { getSessionSymbolFn } from "./useSimulationSessions";
 import { useSimWebSocket } from "./useSimWebSocket";
@@ -70,8 +76,7 @@ function buildInitialSummaries(
 		Object.entries(source).map(([symbol, entry]) => {
 			const lastBar = entry.lastBar ?? undefined;
 			const snapshot = entry.snapshot ?? undefined;
-			const lastPrice =
-				snapshot?.lastPrice ?? (lastBar ? lastBar.close : null);
+			const lastPrice = snapshot?.lastPrice ?? (lastBar ? lastBar.close : null);
 			return [
 				symbol,
 				{
@@ -80,6 +85,7 @@ function buildInitialSummaries(
 					high: lastBar?.high ?? null,
 					low: lastBar?.low ?? null,
 					spread: snapshot?.spread ?? null,
+					divergencePct: entry.divergencePct ?? null,
 					lastBar,
 					snapshot,
 					lastTrade: undefined,
@@ -135,13 +141,8 @@ export function planSymbolDataHydration(input: {
 	nextHydratedSymbolKey: string | null;
 	symbolData: SessionSymbolHydration;
 } {
-	const {
-		sessionId,
-		symbol,
-		initialSymbolData,
-		hydratedSymbolKey,
-		watchlist,
-	} = input;
+	const { sessionId, symbol, initialSymbolData, hydratedSymbolKey, watchlist } =
+		input;
 	const hydrationKey = `${sessionId}:${initialSymbolData.symbol}`;
 	const selectedKey = `${sessionId}:${symbol}`;
 
@@ -173,6 +174,7 @@ export function SessionDashboardProvider({
 	value: SessionDashboardProviderValue;
 }) {
 	const { subscribe, isConnected } = useSimWebSocket();
+	const router = useRouter();
 	const {
 		sessionId,
 		session,
@@ -187,18 +189,41 @@ export function SessionDashboardProvider({
 		initialSymbolData,
 	} = value;
 
+	const [sessionStatusOverride, setSessionStatusOverride] =
+		useState<SimulationSessionStatus | null>(null);
+
+	const effectiveSession = useMemo(
+		() =>
+			sessionStatusOverride
+				? { ...session, status: sessionStatusOverride }
+				: session,
+		[session, sessionStatusOverride],
+	);
+
+	const isPending = effectiveSession.status === "pending";
+	const effectiveIsLive = isLive && effectiveSession.status === "active";
+
 	const baseValue = useMemo<SessionDashboardContextValue>(
 		() => ({
 			sessionId,
-			session,
+			session: effectiveSession,
 			symbol,
 			setSymbol,
-			isLive,
+			isLive: effectiveIsLive,
 			simState,
 			watchlist,
 			agentRoster,
 		}),
-		[agentRoster, isLive, session, sessionId, setSymbol, simState, symbol, watchlist],
+		[
+			agentRoster,
+			effectiveIsLive,
+			effectiveSession,
+			sessionId,
+			setSymbol,
+			simState,
+			symbol,
+			watchlist,
+		],
 	);
 
 	const [watchlistSummaries, setWatchlistSummaries] = useState(() =>
@@ -207,10 +232,10 @@ export function SessionDashboardProvider({
 	const [researchNotes, setResearchNotes] = useState<ResearchNote[]>(
 		initialResearchNotes.slice(0, MAX_RESEARCH_NOTES),
 	);
-	const [agentEvents, setAgentEvents] = useState<AgentEvent[]>(initialAgentEvents);
-	const [symbolData, setSymbolData] = useState<SessionSymbolHydration>(
-		initialSymbolData,
-	);
+	const [agentEvents, setAgentEvents] =
+		useState<AgentEvent[]>(initialAgentEvents);
+	const [symbolData, setSymbolData] =
+		useState<SessionSymbolHydration>(initialSymbolData);
 
 	const researchQueueRef = useRef<ResearchNote[]>([]);
 	const researchFrameRef = useRef<number | null>(null);
@@ -328,7 +353,7 @@ export function SessionDashboardProvider({
 	}, [initialSymbolData, sessionId, symbol, watchlist]);
 
 	useEffect(() => {
-		if (!isLive) {
+		if (!effectiveIsLive || isPending) {
 			return;
 		}
 
@@ -343,19 +368,22 @@ export function SessionDashboardProvider({
 		);
 
 		return unsubscribe;
-	}, [isLive, sessionId, subscribe]);
+	}, [effectiveIsLive, isPending, sessionId, subscribe]);
 
 	useEffect(() => {
-		if (!isLive) {
+		if (!effectiveIsLive || isPending) {
 			return;
 		}
 
-		const unsubscribe = subscribe(buildSessionChannel("research", sessionId), (note: ResearchNote) => {
-			researchQueueRef.current.push(note);
-			if (researchFrameRef.current === null) {
-				researchFrameRef.current = raf(flushResearchQueue);
-			}
-		});
+		const unsubscribe = subscribe(
+			buildSessionChannel("research", sessionId),
+			(note: ResearchNote) => {
+				researchQueueRef.current.push(note);
+				if (researchFrameRef.current === null) {
+					researchFrameRef.current = raf(flushResearchQueue);
+				}
+			},
+		);
 
 		return () => {
 			unsubscribe();
@@ -365,19 +393,22 @@ export function SessionDashboardProvider({
 			}
 			researchQueueRef.current.splice(0);
 		};
-	}, [flushResearchQueue, isLive, sessionId, subscribe]);
+	}, [effectiveIsLive, flushResearchQueue, isPending, sessionId, subscribe]);
 
 	useEffect(() => {
-		if (!isLive) {
+		if (!effectiveIsLive || isPending) {
 			return;
 		}
 
-		const unsubscribe = subscribe(buildSessionChannel("agents", sessionId), (event: AgentEvent) => {
-			agentQueueRef.current.push(event);
-			if (agentFrameRef.current === null) {
-				agentFrameRef.current = raf(flushAgentQueue);
-			}
-		});
+		const unsubscribe = subscribe(
+			buildSessionChannel("agents", sessionId),
+			(event: AgentEvent) => {
+				agentQueueRef.current.push(event);
+				if (agentFrameRef.current === null) {
+					agentFrameRef.current = raf(flushAgentQueue);
+				}
+			},
+		);
 
 		return () => {
 			unsubscribe();
@@ -387,10 +418,10 @@ export function SessionDashboardProvider({
 			}
 			agentQueueRef.current.splice(0);
 		};
-	}, [flushAgentQueue, isLive, sessionId, subscribe]);
+	}, [effectiveIsLive, flushAgentQueue, isPending, sessionId, subscribe]);
 
 	useEffect(() => {
-		if (!isLive) {
+		if (!effectiveIsLive || isPending) {
 			return;
 		}
 
@@ -436,7 +467,49 @@ export function SessionDashboardProvider({
 			}
 			tradeQueueRef.current.splice(0);
 		};
-	}, [flushTradeQueue, isLive, sessionId, subscribe, symbol]);
+	}, [
+		effectiveIsLive,
+		flushTradeQueue,
+		isPending,
+		sessionId,
+		subscribe,
+		symbol,
+	]);
+
+	useEffect(() => {
+		if (!isPending) {
+			return;
+		}
+
+		const unsubscribe = subscribe(
+			buildSessionChannel("sim", sessionId),
+			(msg: SimChannelMessage) => {
+				if (msg.type === "runtime_state") {
+					setSessionStatusOverride("active");
+					void router.invalidate();
+				}
+			},
+		);
+
+		return unsubscribe;
+	}, [isPending, sessionId, subscribe]);
+
+	useEffect(() => {
+		if (!effectiveIsLive || isPending) {
+			return;
+		}
+
+		const unsubscribe = subscribe(
+			buildSessionChannel("sim", sessionId),
+			(msg: SimChannelMessage) => {
+				if (msg.type === "session_status_changed") {
+					setSessionStatusOverride(msg.payload.status);
+				}
+			},
+		);
+
+		return unsubscribe;
+	}, [effectiveIsLive, isPending, sessionId, subscribe]);
 
 	const liveValue = useMemo<SessionDashboardLiveContextValue>(
 		() => ({
