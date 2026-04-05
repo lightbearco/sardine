@@ -1,8 +1,8 @@
 import EventEmitter from "eventemitter3";
 import type { Trade, Order, LOBSnapshot, OHLCVBar } from "#/types/market";
 import type {
-	AgentSignal,
-	SimConfig,
+	AgentEvent,
+	SimRuntimeState,
 	WorldEvent,
 } from "#/types/sim";
 
@@ -13,8 +13,8 @@ export interface EventMap {
 	"lob-update": [snapshot: LOBSnapshot];
 	ohlcv: [bar: OHLCVBar];
 	"world-event": [event: WorldEvent];
-	"agent-signal": [signal: AgentSignal];
-	"sim-state": [state: SimConfig & { tickDurationMs: number }];
+	"agent-event": [event: AgentEvent];
+	"sim-state": [state: SimRuntimeState];
 }
 
 export class EventBus {

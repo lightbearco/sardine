@@ -32,7 +32,10 @@ export const tradingDecisionSchema = z.object({
 export type TradingDecision = z.infer<typeof tradingDecisionSchema>;
 export type { TradingRequestContextValues } from "#/mastra/trading-context";
 
-function listOrFallback(values: string[] | undefined, fallback: string): string {
+function listOrFallback(
+	values: string[] | undefined,
+	fallback: string,
+): string {
 	if (!values || values.length === 0) {
 		return fallback;
 	}
@@ -54,7 +57,9 @@ export const tradingAgent = new Agent({
 	description:
 		"A shared Mastra trading agent template that adapts behavior from RequestContext.",
 	instructions: ({ requestContext }) => {
-		const persona = requestContext?.get("persona") ?? "You are a disciplined market participant.";
+		const persona =
+			requestContext?.get("persona") ??
+			"You are a disciplined market participant.";
 		const agenda =
 			requestContext?.get("current-agenda") ??
 			"Preserve capital while looking for high-conviction trades.";
@@ -101,12 +106,9 @@ Return a structured object matching the provided schema:
 3. \`autopilotDirective\`: the standing orders and monitoring rules you want followed before your next LLM turn.
 `.trim();
 	},
-	model: ({ requestContext }) => {
-		const modelTier = requestContext?.get("model-tier");
+	model: () => {
 		const googleProvider = getGoogleGeminiProvider();
-		return modelTier === "sonnet"
-			? googleProvider("gemini-2.5-pro")
-			: googleProvider("gemini-2.5-flash");
+		return googleProvider("gemini-3.1-flash-lite-preview");
 	},
 	tools: {
 		marketDataTool,

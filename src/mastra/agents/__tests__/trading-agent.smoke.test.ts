@@ -28,7 +28,9 @@ function logTradingDecision(result: {
 	console.log(`\n[live-gemini] Agent reasoning:\n${result.object.reasoning}`);
 
 	if (result.reasoningText) {
-		console.log(`\n[live-gemini] Model reasoning text:\n${result.reasoningText}`);
+		console.log(
+			`\n[live-gemini] Model reasoning text:\n${result.reasoningText}`,
+		);
 	}
 
 	console.log(
@@ -68,7 +70,7 @@ describe("tradingAgent smoke", () => {
 				maxSteps: 6,
 				structuredOutput: {
 					schema: tradingDecisionSchema,
-					model: getGoogleGeminiProvider()("gemini-2.5-flash"),
+					model: getGoogleGeminiProvider()("gemini-3.1-flash-lite-preview"),
 				},
 			});
 

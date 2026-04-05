@@ -16,7 +16,14 @@ export class MatchingEngine {
 	processOrder(order: Order, tick: number): Trade[] {
 		const book = this.books.get(order.symbol);
 		if (!book) {
-			throw new Error(`No order book for symbol: ${order.symbol}`);
+			order.status = "cancelled";
+			order.llmReasoning = order.llmReasoning
+				? `${order.llmReasoning}\n\n[system] unsupported_symbol:${order.symbol}`
+				: `[system] unsupported_symbol:${order.symbol}`;
+			console.warn(
+				`[MatchingEngine] Unsupported symbol ${order.symbol}; skipping order ${order.id}`,
+			);
+			return [];
 		}
 		return book.addOrder(order, tick);
 	}
@@ -77,12 +84,13 @@ export class MatchingEngine {
 		depth: number,
 		qtyPerLevel: number,
 		tick: number,
-	): void {
+	): Order[] {
 		const book = this.books.get(symbol);
 		if (!book) {
 			throw new Error(`No order book for symbol: ${symbol}`);
 		}
 
+		const seededOrders: Order[] = [];
 		const halfSpread = spread.div(2);
 		const bestBid = midPrice.minus(halfSpread);
 		const bestAsk = midPrice.plus(halfSpread);
@@ -92,37 +100,37 @@ export class MatchingEngine {
 			const bidPrice = bestBid.minus(tickSize.times(i));
 			const askPrice = bestAsk.plus(tickSize.times(i));
 
-			book.addOrder(
-				{
-					id: nanoid(),
-					symbol,
-					side: "buy",
-					type: "limit",
-					price: bidPrice,
-					qty: qtyPerLevel,
-					filledQty: 0,
-					status: "pending",
-					agentId: "market-maker-seed",
-					createdAtTick: tick,
-				},
-				tick,
-			);
+			const bidOrder: Order = {
+				id: nanoid(),
+				symbol,
+				side: "buy",
+				type: "limit",
+				price: bidPrice,
+				qty: qtyPerLevel,
+				filledQty: 0,
+				status: "pending",
+				agentId: "market-maker-seed",
+				createdAtTick: tick,
+			};
+			book.addOrder(bidOrder, tick);
+			seededOrders.push(bidOrder);
 
-			book.addOrder(
-				{
-					id: nanoid(),
-					symbol,
-					side: "sell",
-					type: "limit",
-					price: askPrice,
-					qty: qtyPerLevel,
-					filledQty: 0,
-					status: "pending",
-					agentId: "market-maker-seed",
-					createdAtTick: tick,
-				},
-				tick,
-			);
+			const askOrder: Order = {
+				id: nanoid(),
+				symbol,
+				side: "sell",
+				type: "limit",
+				price: askPrice,
+				qty: qtyPerLevel,
+				filledQty: 0,
+				status: "pending",
+				agentId: "market-maker-seed",
+				createdAtTick: tick,
+			};
+			book.addOrder(askOrder, tick);
+			seededOrders.push(askOrder);
 		}
+
+		return seededOrders;
 	}
 }

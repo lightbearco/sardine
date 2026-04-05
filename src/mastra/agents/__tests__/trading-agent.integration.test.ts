@@ -2,19 +2,23 @@ import { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import { AgentRegistry } from "#/agents/AgentRegistry";
-import { PortfolioManager } from "#/agents/PortfolioManager";
 import { executeAutopilot } from "#/agents/autopilot";
 import { generateAgentConfigs, spawnAgents } from "#/agents/factory";
+import { PortfolioManager } from "#/agents/PortfolioManager";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SIM_DEFAULTS } from "#/lib/constants";
+import { marketDataTool } from "#/mastra/tools/marketDataTool";
+import { orderTool } from "#/mastra/tools/orderTool";
+import { portfolioTool } from "#/mastra/tools/portfolioTool";
 import {
 	cloneTradingRequestContext,
 	type TradingRequestContextValues,
 } from "#/mastra/trading-context";
-import { marketDataTool } from "#/mastra/tools/marketDataTool";
-import { orderTool } from "#/mastra/tools/orderTool";
-import { portfolioTool } from "#/mastra/tools/portfolioTool";
-import type { AgentConfig, AgentState, AutopilotDirective } from "#/types/agent";
+import type {
+	AgentConfig,
+	AgentState,
+	AutopilotDirective,
+} from "#/types/agent";
 import type { Order, Trade } from "#/types/market";
 
 function registerCounterparty(
@@ -39,7 +43,7 @@ function registerCounterparty(
 		sectors: ["Technology"],
 		risk: 0.3,
 		capital: 100_000,
-		model: "google/gemini-2.5-flash",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 0,
 		decisionParams: {},
 		...overrides,
@@ -73,9 +77,7 @@ function registerCounterparty(
 	});
 }
 
-function createRestingOrder(
-	overrides: Partial<Order> = {},
-): Order {
+function createRestingOrder(overrides: Partial<Order> = {}): Order {
 	return {
 		id: "counterparty-order",
 		symbol: "AAPL",
@@ -153,17 +155,21 @@ describe("trading agent deterministic integration", () => {
 		entry!.state.cash = new Decimal("99050");
 		entry!.state.nav = new Decimal("100050");
 
-		registerCounterparty(registry, {}, {
-			positions: new Map([
-				[
-					"AAPL",
-					{
-						qty: 20,
-						avgCost: new Decimal("100"),
-					},
-				],
-			]),
-		});
+		registerCounterparty(
+			registry,
+			{},
+			{
+				positions: new Map([
+					[
+						"AAPL",
+						{
+							qty: 20,
+							avgCost: new Decimal("100"),
+						},
+					],
+				]),
+			},
+		);
 
 		const requestContext = cloneTradingRequestContext(
 			entry!.requestContext as RequestContext<TradingRequestContextValues>,
@@ -258,17 +264,21 @@ describe("trading agent deterministic integration", () => {
 			holdPositions: ["AAPL"],
 		} satisfies AutopilotDirective;
 
-		registerCounterparty(registry, {}, {
-			positions: new Map([
-				[
-					"AAPL",
-					{
-						qty: 20,
-						avgCost: new Decimal("99"),
-					},
-				],
-			]),
-		});
+		registerCounterparty(
+			registry,
+			{},
+			{
+				positions: new Map([
+					[
+						"AAPL",
+						{
+							qty: 20,
+							avgCost: new Decimal("99"),
+						},
+					],
+				]),
+			},
+		);
 
 		const engine = new MatchingEngine();
 		engine.initialize(["AAPL"]);

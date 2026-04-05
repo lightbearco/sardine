@@ -1,10 +1,15 @@
-import { asc, eq, type InferSelectModel } from "drizzle-orm";
 import Decimal from "decimal.js";
+import { asc, eq, sql, type InferSelectModel } from "drizzle-orm";
 import pLimit from "p-limit";
-import { PortfolioManager } from "#/agents/PortfolioManager";
+import type { RequestContext } from "@mastra/core/request-context";
+import { z } from "zod";
 import type { AgentRegistry, AgentRegistryEntry } from "#/agents/AgentRegistry";
-import { partitionAgentEntries, getActiveGroupIndex } from "#/agents/batch-scheduler";
 import { executeAutopilot } from "#/agents/autopilot";
+import {
+	getActiveGroupIndex,
+	partitionAgentEntries,
+} from "#/agents/batch-scheduler";
+import { PortfolioManager } from "#/agents/PortfolioManager";
 import { serializeAgentEntryForDb } from "#/agents/persistence";
 import type { Database } from "#/db";
 import {
@@ -21,22 +26,24 @@ import type { PublicationBus } from "#/engine/bus/PublicationBus";
 import type { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SIM_DEFAULTS } from "#/lib/constants";
 import {
+	type TradingDecision,
+	tradingDecisionSchema,
+} from "#/mastra/agents/trading-agent";
+import { getGoogleGeminiProvider } from "#/mastra/google-gemini";
+import {
 	cloneTradingRequestContext,
 	type TradingRequestContextValues,
 } from "#/mastra/trading-context";
-import {
-	tradingDecisionSchema,
-	type TradingDecision,
-} from "#/mastra/agents/trading-agent";
-import { getGoogleGeminiProvider } from "#/mastra/google-gemini";
-import type { Order, OHLCVBar, Trade } from "#/types/market";
+import type { OHLCVBar, Order, Trade } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 import type {
+	AgentDecisionEvent,
+	AgentDecisionOrder,
+	AgentFailureReason,
 	AgentSignal,
 	InjectWorldEventCommand,
 	ParsedSimCommand,
-	SimCommandType,
-	SimConfig,
+	SimRuntimeState,
 	SimOrchestratorState,
 	StagedOrderResult,
 	TickSummary,
@@ -53,11 +60,16 @@ const DEFAULT_LLM_TIMEOUT_MS = 15_000;
 const SIM_CONFIG_ROW_ID = 1;
 
 type CommandRow = InferSelectModel<typeof commandsTable>;
+type TradingAgentStreamLike = {
+	fullStream: AsyncIterable<unknown>;
+	object: Promise<TradingDecision>;
+};
+
 type TradingAgentLike = {
-	generate(
+	stream(
 		prompt: string,
 		options: Record<string, unknown>,
-	): Promise<{ object: unknown }>;
+	): Promise<TradingAgentStreamLike>;
 };
 
 interface CommandUpdate {
@@ -66,9 +78,24 @@ interface CommandUpdate {
 	resultMessage: string;
 }
 
+interface ControlCommandOutcome {
+	processed: boolean;
+	stepCount: number;
+}
+
 interface ActiveAgentOutcome {
 	stagedOrders: StagedOrderResult[];
-	signalEvents: AgentSignal[];
+}
+
+class ActiveAgentGenerationError extends Error {
+	constructor(
+		message: string,
+		public readonly failureReason: AgentFailureReason,
+		public readonly transcript: string,
+	) {
+		super(message);
+		this.name = "ActiveAgentGenerationError";
+	}
 }
 
 export class SimOrchestrator {
@@ -80,7 +107,8 @@ export class SimOrchestrator {
 	private isTicking = false;
 	private lastSummary: TickSummary | null = null;
 	private speedMultiplier = 1;
-	private tickIntervalMs = SIM_DEFAULTS.tickIntervalMs;
+	private tickIntervalMs: number = SIM_DEFAULTS.tickIntervalMs;
+	private readonly supportedSymbols: ReadonlySet<string>;
 
 	constructor(
 		private readonly matchingEngine: MatchingEngine,
@@ -99,6 +127,7 @@ export class SimOrchestrator {
 		this.llmConcurrency = options.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
 		this.llmTimeoutMs = options.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
 		this.groupCount = options.groupCount ?? SIM_DEFAULTS.groupCount;
+		this.supportedSymbols = new Set(this.matchingEngine.getSymbols());
 	}
 
 	async start(): Promise<void> {
@@ -120,11 +149,16 @@ export class SimOrchestrator {
 	 * Used by the sim-runner when paused so that "start" commands can resume the simulation.
 	 * Returns true if any commands were processed.
 	 */
-	async processControlCommands(): Promise<boolean> {
+	async processControlCommands(): Promise<ControlCommandOutcome> {
 		const pendingCommands = await this.loadPendingCommands();
-		if (pendingCommands.length === 0) return false;
+		if (pendingCommands.length === 0) {
+			return {
+				processed: false,
+				stepCount: 0,
+			};
+		}
 
-		const { commandUpdates } = this.processPendingCommands(
+		const { commandUpdates, stepCount } = this.processPendingCommands(
 			pendingCommands,
 			this.simClock.simTick,
 		);
@@ -142,9 +176,13 @@ export class SimOrchestrator {
 						.where(eq(commandsTable.id, commandUpdate.id));
 				}
 			});
+			await this.persistSimConfig();
 		}
 
-		return commandUpdates.length > 0;
+		return {
+			processed: commandUpdates.length > 0,
+			stepCount,
+		};
 	}
 
 	getState(): SimOrchestratorState {
@@ -153,12 +191,23 @@ export class SimOrchestrator {
 			isTicking: this.isTicking,
 			simTick: this.simClock.simTick,
 			simulatedTime: new Date(this.simClock.simulatedTime),
-			activeGroupIndex: getActiveGroupIndex(this.simClock.simTick, this.groupCount),
+			activeGroupIndex: getActiveGroupIndex(
+				this.simClock.simTick,
+				this.groupCount,
+			),
 			lastSummary: this.lastSummary,
 		};
 	}
 
-	async tick(): Promise<TickSummary> {
+	getRuntimeState(): SimRuntimeState {
+		return this.buildRuntimeState();
+	}
+
+	async tick(
+		options: {
+			skipPendingCommands?: boolean;
+		} = {},
+	): Promise<TickSummary> {
 		if (this.isTicking) {
 			throw new Error("SimOrchestrator is already processing a tick");
 		}
@@ -173,9 +222,16 @@ export class SimOrchestrator {
 			const changedAgentIds = new Set<string>();
 			const touchedSymbols = new Set<string>();
 
-			const pendingCommands = await this.loadPendingCommands();
-			const { commandUpdates, appliedWorldEvents } =
-				this.processPendingCommands(pendingCommands, simTick);
+			const pendingCommands = options.skipPendingCommands
+				? []
+				: await this.loadPendingCommands();
+			const { commandUpdates, appliedWorldEvents } = options.skipPendingCommands
+				? {
+						commandUpdates: [] as CommandUpdate[],
+						appliedWorldEvents: [] as WorldEvent[],
+						stepCount: 0,
+					}
+				: this.processPendingCommands(pendingCommands, simTick);
 
 			const releasedNotes = this.publicationBus.releaseDue(simTick);
 			this.deliverReleasedResearch(releasedNotes, changedAgentIds);
@@ -184,6 +240,10 @@ export class SimOrchestrator {
 				this.agentRegistry,
 				simTick,
 				this.groupCount,
+			);
+			this.pruneUnsupportedOpenOrders(
+				[...active, ...inactive],
+				changedAgentIds,
 			);
 
 			const preMatchReferencePrices = this.matchingEngine.getReferencePrices();
@@ -216,6 +276,15 @@ export class SimOrchestrator {
 						continue;
 					}
 
+					if (!this.isSupportedSymbol(existingOrder.symbol)) {
+						console.warn(
+							`[SimOrchestrator] Removing cancel target ${cancelOrderId} for unsupported symbol ${existingOrder.symbol}`,
+						);
+						entry.state.openOrders.delete(cancelOrderId);
+						changedAgentIds.add(entry.config.id);
+						continue;
+					}
+
 					this.matchingEngine.cancelOrder(cancelOrderId, existingOrder.symbol);
 					entry.state.openOrders.delete(cancelOrderId);
 					touchedSymbols.add(existingOrder.symbol);
@@ -228,7 +297,6 @@ export class SimOrchestrator {
 						agentName: entry.config.name,
 						reasoning: null,
 					});
-					touchedSymbols.add(order.symbol);
 				}
 			}
 
@@ -240,12 +308,21 @@ export class SimOrchestrator {
 			);
 
 			stagedOrders.push(...activeOutcome.stagedOrders);
-			for (const stagedOrder of activeOutcome.stagedOrders) {
+			const dedupedOrders = this.deduplicateStagedOrders(stagedOrders);
+			const { freshOrders, replayedOrders } = this.partitionReplayedOpenOrders(
+				dedupedOrders,
+			);
+			const { validOrders, rejectedOrders } = this.partitionUnsupportedOrders(
+				freshOrders,
+				changedAgentIds,
+			);
+
+			for (const stagedOrder of validOrders) {
 				touchedSymbols.add(stagedOrder.order.symbol);
 			}
 
 			const trades = this.matchingEngine.processOrders(
-				stagedOrders.map((stagedOrder) => stagedOrder.order),
+				validOrders.map((stagedOrder) => stagedOrder.order),
 				simTick,
 			);
 
@@ -255,7 +332,13 @@ export class SimOrchestrator {
 				touchedSymbols.add(trade.symbol);
 			}
 
-			for (const stagedOrder of stagedOrders) {
+			const persistedOrders = [
+				...validOrders,
+				...replayedOrders,
+				...rejectedOrders,
+			];
+
+			for (const stagedOrder of persistedOrders) {
 				this.syncOrderState(stagedOrder.order, changedAgentIds);
 			}
 
@@ -279,7 +362,7 @@ export class SimOrchestrator {
 
 			const bars = this.computeOhlcvBars(trades);
 			await this.persistTick(
-				stagedOrders,
+				persistedOrders,
 				trades,
 				bars,
 				commandUpdates,
@@ -288,7 +371,7 @@ export class SimOrchestrator {
 				simulatedTime,
 			);
 
-			for (const stagedOrder of stagedOrders) {
+			for (const stagedOrder of persistedOrders) {
 				this.eventBus.emit("order", stagedOrder.order);
 			}
 
@@ -297,15 +380,14 @@ export class SimOrchestrator {
 			}
 
 			for (const symbol of touchedSymbols) {
-				this.eventBus.emit("lob-update", this.matchingEngine.getSnapshot(symbol));
+				this.eventBus.emit(
+					"lob-update",
+					this.matchingEngine.getSnapshot(symbol),
+				);
 			}
 
 			for (const bar of bars) {
 				this.eventBus.emit("ohlcv", bar);
-			}
-
-			for (const signal of activeOutcome.signalEvents) {
-				this.eventBus.emit("agent-signal", signal);
 			}
 
 			for (const event of appliedWorldEvents) {
@@ -314,7 +396,7 @@ export class SimOrchestrator {
 
 			const summary: TickSummary = {
 				durationMs: Date.now() - tickStartedAt,
-				orderCount: stagedOrders.length,
+				orderCount: persistedOrders.length,
 				tradeCount: trades.length,
 				activeAgents: active.length,
 				simTick,
@@ -325,10 +407,7 @@ export class SimOrchestrator {
 
 			this.lastSummary = summary;
 			this.eventBus.emit("tick", { simTick, simulatedTime });
-			this.eventBus.emit("sim-state", {
-				...this.buildSimConfig(active.length),
-				tickDurationMs: summary.durationMs,
-			});
+			this.eventBus.emit("sim-state", this.buildRuntimeState(active.length));
 
 			return summary;
 		} finally {
@@ -348,26 +427,41 @@ export class SimOrchestrator {
 		);
 		const settledResults = await Promise.allSettled(tasks);
 		const stagedOrders: StagedOrderResult[] = [];
-		const signalEvents: AgentSignal[] = [];
 
 		for (const [index, settled] of settledResults.entries()) {
 			const entry = activeEntries[index];
 
 			if (settled.status === "fulfilled") {
-				entry.state.lastAutopilotDirective = settled.value.decision.autopilotDirective;
+				entry.state.lastAutopilotDirective =
+					settled.value.decision.autopilotDirective;
 				entry.state.lastLlmTick = simTick;
 				changedAgentIds.add(entry.config.id);
 				stagedOrders.push(...settled.value.orders);
-				signalEvents.push(...settled.value.signals);
 				continue;
 			}
 
-			entry.state.lastAutopilotDirective = this.buildFallbackDirective(entry);
+			const failure = this.normalizeActiveAgentFailure(settled.reason);
+			const fallbackDirective = this.buildFallbackDirective(entry);
+			console.error(
+				`[LLM FAIL] Agent "${entry.config.name}" (${entry.config.id}) tick ${simTick}:`,
+				failure.message,
+			);
+			entry.state.lastAutopilotDirective = fallbackDirective;
 			entry.state.lastLlmTick = simTick;
 			changedAgentIds.add(entry.config.id);
+			this.eventBus.emit("agent-event", {
+				type: "failed",
+				agentId: entry.config.id,
+				agentName: entry.config.name,
+				tick: simTick,
+				reason: failure.reason,
+				message: failure.message,
+				transcript: failure.transcript,
+				fallbackDirective,
+			});
 		}
 
-		return { stagedOrders, signalEvents };
+		return { stagedOrders };
 	}
 
 	private async generateForActiveAgent(
@@ -377,10 +471,9 @@ export class SimOrchestrator {
 	): Promise<{
 		decision: TradingDecision;
 		orders: StagedOrderResult[];
-		signals: AgentSignal[];
 	}> {
 		const requestContext = cloneTradingRequestContext(
-			entry.requestContext as unknown as RequestContext<TradingRequestContextValues>
+			entry.requestContext as unknown as RequestContext<TradingRequestContextValues>,
 		);
 		requestContext.set("agent-registry", this.agentRegistry);
 		requestContext.set("matching-engine", this.matchingEngine);
@@ -390,68 +483,129 @@ export class SimOrchestrator {
 			this.getReleasedNotesForAgent(entry),
 		);
 
-		const result = await this.generateWithTimeout(
-			this.buildTickPrompt(entry, simTick, simulatedTime),
-			requestContext,
-		);
-		const decision = tradingDecisionSchema.parse(result.object);
-
-		const orders = decision.ordersPlaced.map((placedOrder) => ({
-			order: {
-				id: placedOrder.orderId,
-				symbol: placedOrder.symbol,
-				side: placedOrder.side,
-				type: placedOrder.type,
-				price: new Decimal(placedOrder.price),
-				qty: placedOrder.qty,
-				filledQty: placedOrder.filledQty,
-				status: "pending" as const,
-				agentId: entry.config.id,
-				llmReasoning: decision.reasoning,
-				createdAtTick: simTick,
-			},
-			source: "llm" as const,
-			agentName: entry.config.name,
-			reasoning: decision.reasoning,
-		}));
-		const signals = orders.map(({ order, reasoning }) => ({
+		const prompt = this.buildTickPrompt(entry, simTick, simulatedTime);
+		this.eventBus.emit("agent-event", {
+			type: "run_started",
 			agentId: entry.config.id,
 			agentName: entry.config.name,
-			side: order.side,
-			symbol: order.symbol,
-			price: order.type === "market" ? 0 : order.price.toNumber(),
-			qty: order.qty,
-			reasoning,
 			tick: simTick,
-		}));
+		});
 
-		return { decision, orders, signals };
+		let transcript = "";
+
+		try {
+			const stream = await this.streamWithTimeout(prompt, requestContext);
+			const consumeThinkingPromise = this.consumeAgentThinkingStream(
+				stream.fullStream,
+				entry,
+				simTick,
+				(delta) => {
+					transcript += delta;
+				},
+			);
+
+			const decision = tradingDecisionSchema.parse(await stream.object);
+			await consumeThinkingPromise;
+
+			const decisionOrders: AgentDecisionOrder[] = decision.ordersPlaced.map(
+				(placedOrder) => ({
+					orderId: placedOrder.orderId,
+					symbol: placedOrder.symbol,
+					side: placedOrder.side,
+					type: placedOrder.type,
+					qty: placedOrder.qty,
+					price: placedOrder.price,
+					status: placedOrder.status,
+					filledQty: placedOrder.filledQty,
+					rejectionReason: placedOrder.rejectionReason,
+				}),
+			);
+			const decisionEvent: AgentDecisionEvent = {
+				type: "decision",
+				agentId: entry.config.id,
+				agentName: entry.config.name,
+				tick: simTick,
+				decision: {
+					reasoning: decision.reasoning,
+					ordersPlaced: decisionOrders,
+					autopilotDirective: decision.autopilotDirective,
+				},
+			};
+			this.eventBus.emit("agent-event", decisionEvent);
+
+			const orders = decision.ordersPlaced.map((placedOrder) => ({
+				order: {
+					id: placedOrder.orderId,
+					symbol: placedOrder.symbol,
+					side: placedOrder.side,
+					type: placedOrder.type,
+					price: new Decimal(placedOrder.price),
+					qty: placedOrder.qty,
+					filledQty: placedOrder.filledQty,
+					status: "pending" as const,
+					agentId: entry.config.id,
+					llmReasoning: decision.reasoning,
+					createdAtTick: simTick,
+				},
+				source: "llm" as const,
+				agentName: entry.config.name,
+				reasoning: decision.reasoning,
+			}));
+
+			for (const { order, reasoning } of orders) {
+				const signal: AgentSignal = {
+					agentId: entry.config.id,
+					agentName: entry.config.name,
+					side: order.side,
+					symbol: order.symbol,
+					price: order.type === "market" ? 0 : order.price.toNumber(),
+					qty: order.qty,
+					reasoning,
+					tick: simTick,
+				};
+
+				this.eventBus.emit("agent-event", {
+					type: "signal",
+					agentId: entry.config.id,
+					agentName: entry.config.name,
+					tick: simTick,
+					signal,
+				});
+			}
+
+			return { decision, orders };
+		} catch (error) {
+			throw this.classifyActiveAgentFailure(error, transcript);
+		}
 	}
 
-	private async generateWithTimeout(
+	private async streamWithTimeout(
 		prompt: string,
 		requestContext: ReturnType<typeof cloneTradingRequestContext>,
-	): Promise<{ object: unknown }> {
+	): Promise<TradingAgentStreamLike> {
 		const controller = new AbortController();
 		const timeoutHandle = setTimeout(() => {
 			controller.abort("LLM generation timed out");
 		}, this.llmTimeoutMs);
 
 		try {
-			return await this.tradingAgent.generate(prompt, {
+			return await this.tradingAgent.stream(prompt, {
 				requestContext,
 				maxSteps: 6,
 				abortSignal: controller.signal,
 				structuredOutput: {
 					schema: tradingDecisionSchema,
-					model: this.resolveStructuredOutputModel(
-						requestContext.get("model-tier"),
-					),
+					model: this.resolveStructuredOutputModel(),
+					jsonPromptInjection: true,
 				},
 			});
 		} catch (error) {
 			if (controller.signal.aborted) {
-				throw new Error("LLM generation timed out");
+				throw new ActiveAgentGenerationError(
+					"LLM generation timed out",
+					"timeout",
+					"",
+				);
 			}
 
 			throw error;
@@ -460,11 +614,131 @@ export class SimOrchestrator {
 		}
 	}
 
-	private resolveStructuredOutputModel(modelTier: "sonnet" | "haiku" | undefined) {
+	private resolveStructuredOutputModel() {
 		const googleProvider = getGoogleGeminiProvider();
-		return modelTier === "sonnet"
-			? googleProvider("gemini-2.5-pro")
-			: googleProvider("gemini-2.5-flash");
+		return googleProvider("gemini-3.1-flash-lite-preview");
+	}
+
+	private async consumeAgentThinkingStream(
+		fullStream: AsyncIterable<unknown>,
+		entry: AgentRegistryEntry,
+		simTick: number,
+		onDelta: (delta: string) => void,
+	): Promise<void> {
+		let transcript = "";
+
+		for await (const chunk of fullStream) {
+			const delta = this.extractAgentThinkingDelta(chunk);
+			if (!delta) {
+				continue;
+			}
+
+			transcript += delta;
+			onDelta(delta);
+			this.eventBus.emit("agent-event", {
+				type: "thinking_delta",
+				agentId: entry.config.id,
+				agentName: entry.config.name,
+				tick: simTick,
+				delta,
+				transcript,
+			});
+		}
+	}
+
+	private extractAgentThinkingDelta(chunk: unknown): string | null {
+		if (!chunk || typeof chunk !== "object") {
+			return null;
+		}
+
+		const streamChunk = chunk as {
+			type?: string;
+			payload?: {
+				text?: string;
+			};
+		};
+
+		if (
+			streamChunk.type !== "text-delta" &&
+			streamChunk.type !== "reasoning-delta"
+		) {
+			return null;
+		}
+
+		return typeof streamChunk.payload?.text === "string"
+			? streamChunk.payload.text
+			: null;
+	}
+
+	private classifyActiveAgentFailure(
+		error: unknown,
+		transcript: string,
+	): ActiveAgentGenerationError {
+		if (error instanceof ActiveAgentGenerationError) {
+			return new ActiveAgentGenerationError(
+				error.message,
+				error.failureReason,
+				transcript || error.transcript,
+			);
+		}
+
+		if (error instanceof z.ZodError || this.isSchemaValidationError(error)) {
+			const message =
+				error instanceof Error ? error.message : "Structured output validation failed";
+			return new ActiveAgentGenerationError(
+				message,
+				"schema_validation_failed",
+				transcript,
+			);
+		}
+
+		const message = error instanceof Error ? error.message : "LLM generation failed";
+		return new ActiveAgentGenerationError(message, "llm_error", transcript);
+	}
+
+	private normalizeActiveAgentFailure(error: unknown): {
+		reason: AgentFailureReason;
+		message: string;
+		transcript: string;
+	} {
+		if (error instanceof ActiveAgentGenerationError) {
+			return {
+				reason: error.failureReason,
+				message: error.message,
+				transcript: error.transcript,
+			};
+		}
+
+		if (error instanceof Error) {
+			return {
+				reason: this.isSchemaValidationError(error)
+					? "schema_validation_failed"
+					: "llm_error",
+				message: error.message,
+				transcript: "",
+			};
+		}
+
+		return {
+			reason: "llm_error",
+			message: "LLM generation failed",
+			transcript: "",
+		};
+	}
+
+	private isSchemaValidationError(error: unknown): boolean {
+		if (!(error instanceof Error)) {
+			return false;
+		}
+
+		const message = error.message.toLowerCase();
+		return (
+			message.includes("schema") ||
+			message.includes("validation") ||
+			message.includes("structured output") ||
+			message.includes("invalid_type") ||
+			message.includes("zod")
+		);
 	}
 
 	private syncOrderState(order: Order, changedAgentIds: Set<string>): void {
@@ -483,6 +757,166 @@ export class SimOrchestrator {
 		}
 
 		changedAgentIds.add(order.agentId);
+	}
+
+	private pruneUnsupportedOpenOrders(
+		entries: AgentRegistryEntry[],
+		changedAgentIds: Set<string>,
+	): void {
+		for (const entry of entries) {
+			const supportedOpenOrders = new Map<string, Order>();
+			let removedUnsupported = false;
+
+			for (const [orderId, order] of entry.state.openOrders.entries()) {
+				if (this.isSupportedSymbol(order.symbol)) {
+					supportedOpenOrders.set(orderId, order);
+					continue;
+				}
+
+				removedUnsupported = true;
+				console.warn(
+					`[SimOrchestrator] Dropping stale open order ${order.id} for unsupported symbol ${order.symbol}`,
+				);
+			}
+
+			if (!removedUnsupported) {
+				continue;
+			}
+
+			entry.state.openOrders = supportedOpenOrders;
+			changedAgentIds.add(entry.config.id);
+		}
+	}
+
+	private deduplicateStagedOrders(
+		stagedOrders: StagedOrderResult[],
+	): StagedOrderResult[] {
+		const ordersById = new Map<string, StagedOrderResult>();
+
+		for (const stagedOrder of stagedOrders) {
+			const existingOrder = ordersById.get(stagedOrder.order.id);
+			if (!existingOrder) {
+				ordersById.set(stagedOrder.order.id, stagedOrder);
+				continue;
+			}
+
+			if (this.hasConflictingOrderIdentity(existingOrder.order, stagedOrder.order)) {
+				console.error(
+					`[SimOrchestrator] Conflicting replay for order ${stagedOrder.order.id}; discarding duplicate stage`,
+					{
+						existing: {
+							agentId: existingOrder.order.agentId,
+							symbol: existingOrder.order.symbol,
+							side: existingOrder.order.side,
+							type: existingOrder.order.type,
+						},
+						incoming: {
+							agentId: stagedOrder.order.agentId,
+							symbol: stagedOrder.order.symbol,
+							side: stagedOrder.order.side,
+							type: stagedOrder.order.type,
+						},
+					},
+				);
+				continue;
+			}
+
+			console.warn(
+				`[SimOrchestrator] Duplicate staged order ${stagedOrder.order.id}; keeping latest version`,
+			);
+			ordersById.set(stagedOrder.order.id, stagedOrder);
+		}
+
+		return Array.from(ordersById.values());
+	}
+
+	private partitionUnsupportedOrders(
+		stagedOrders: StagedOrderResult[],
+		changedAgentIds: Set<string>,
+	): {
+		validOrders: StagedOrderResult[];
+		rejectedOrders: StagedOrderResult[];
+	} {
+		const validOrders: StagedOrderResult[] = [];
+		const rejectedOrders: StagedOrderResult[] = [];
+
+		for (const stagedOrder of stagedOrders) {
+			if (this.isSupportedSymbol(stagedOrder.order.symbol)) {
+				validOrders.push(stagedOrder);
+				continue;
+			}
+
+			const rejectionReason = `[system] unsupported_symbol:${stagedOrder.order.symbol}`;
+			console.warn(
+				`[SimOrchestrator] Rejecting order ${stagedOrder.order.id} for unsupported symbol ${stagedOrder.order.symbol}`,
+			);
+			rejectedOrders.push({
+				...stagedOrder,
+				order: {
+					...stagedOrder.order,
+					status: "cancelled",
+					llmReasoning: stagedOrder.order.llmReasoning
+						? `${stagedOrder.order.llmReasoning}\n\n${rejectionReason}`
+						: rejectionReason,
+				},
+				reasoning: stagedOrder.reasoning
+					? `${stagedOrder.reasoning}\n\n${rejectionReason}`
+					: rejectionReason,
+			});
+			changedAgentIds.add(stagedOrder.order.agentId);
+		}
+
+		return {
+			validOrders,
+			rejectedOrders,
+		};
+	}
+
+	private partitionReplayedOpenOrders(stagedOrders: StagedOrderResult[]): {
+		freshOrders: StagedOrderResult[];
+		replayedOrders: StagedOrderResult[];
+	} {
+		const freshOrders: StagedOrderResult[] = [];
+		const replayedOrders: StagedOrderResult[] = [];
+
+		for (const stagedOrder of stagedOrders) {
+			const existingOrder = this.agentRegistry
+				.get(stagedOrder.order.agentId)
+				?.state.openOrders.get(stagedOrder.order.id);
+
+			if (!existingOrder) {
+				freshOrders.push(stagedOrder);
+				continue;
+			}
+
+			console.warn(
+				`[SimOrchestrator] Ignoring replayed open order ${stagedOrder.order.id}; persisting current state without re-matching`,
+			);
+			replayedOrders.push({
+				...stagedOrder,
+				order: existingOrder,
+				reasoning:
+					stagedOrder.reasoning ?? existingOrder.llmReasoning ?? null,
+			});
+		}
+
+		return {
+			freshOrders,
+			replayedOrders,
+		};
+	}
+
+	private hasConflictingOrderIdentity(left: Order, right: Order): boolean {
+		return (
+			left.agentId !== right.agentId ||
+			left.symbol !== right.symbol ||
+			left.side !== right.side ||
+			left.type !== right.type
+		);
+	}
+
+	private isSupportedSymbol(symbol: string): boolean {
+		return this.supportedSymbols.has(symbol);
 	}
 
 	private deliverReleasedResearch(
@@ -556,7 +990,9 @@ export class SimOrchestrator {
 		].join("\n\n");
 	}
 
-	private buildFallbackDirective(entry: AgentRegistryEntry): TradingDecision["autopilotDirective"] {
+	private buildFallbackDirective(
+		entry: AgentRegistryEntry,
+	): TradingDecision["autopilotDirective"] {
 		return {
 			standingOrders: [],
 			holdPositions: Array.from(entry.state.positions.keys()),
@@ -605,9 +1041,11 @@ export class SimOrchestrator {
 	): {
 		commandUpdates: CommandUpdate[];
 		appliedWorldEvents: WorldEvent[];
+		stepCount: number;
 	} {
 		const commandUpdates: CommandUpdate[] = [];
 		const appliedWorldEvents: WorldEvent[] = [];
+		let stepCount = 0;
 
 		for (const command of pendingCommands) {
 			try {
@@ -643,22 +1081,47 @@ export class SimOrchestrator {
 							resultMessage: "Simulation paused",
 						});
 						break;
-					case "set_speed":
-						this.speedMultiplier = parsedCommand.payload.speedMultiplier;
+					case "step":
+						if (this.isRunning) {
+							commandUpdates.push({
+								id: command.id,
+								status: "processed",
+								resultMessage: "Simulation already running; step ignored",
+							});
+							break;
+						}
+
+						stepCount += 1;
 						commandUpdates.push({
 							id: command.id,
 							status: "processed",
-							resultMessage: `Speed multiplier set to ${parsedCommand.payload.speedMultiplier}`,
+							resultMessage: "Single tick step queued",
 						});
 						break;
-					case "set_tick_interval":
-						this.tickIntervalMs = parsedCommand.payload.tickIntervalMs;
+					case "set_speed": {
+						const speedPayload = parsedCommand.payload as {
+							speedMultiplier: number;
+						};
+						this.speedMultiplier = speedPayload.speedMultiplier;
 						commandUpdates.push({
 							id: command.id,
 							status: "processed",
-							resultMessage: `Tick interval set to ${parsedCommand.payload.tickIntervalMs}ms`,
+							resultMessage: `Speed multiplier set to ${speedPayload.speedMultiplier}`,
 						});
 						break;
+					}
+					case "set_tick_interval": {
+						const intervalPayload = parsedCommand.payload as {
+							tickIntervalMs: number;
+						};
+						this.tickIntervalMs = intervalPayload.tickIntervalMs;
+						commandUpdates.push({
+							id: command.id,
+							status: "processed",
+							resultMessage: `Tick interval set to ${intervalPayload.tickIntervalMs}ms`,
+						});
+						break;
+					}
 				}
 			} catch (error) {
 				commandUpdates.push({
@@ -670,7 +1133,7 @@ export class SimOrchestrator {
 			}
 		}
 
-		return { commandUpdates, appliedWorldEvents };
+		return { commandUpdates, appliedWorldEvents, stepCount };
 	}
 
 	private parseCommand(command: CommandRow): ParsedSimCommand {
@@ -684,7 +1147,9 @@ export class SimOrchestrator {
 		const payloadResult = payloadSchema.safeParse(command.payload ?? {});
 
 		if (!payloadResult.success) {
-			throw new Error(payloadResult.error.issues[0]?.message ?? "Invalid command payload");
+			throw new Error(
+				payloadResult.error.issues[0]?.message ?? "Invalid command payload",
+			);
 		}
 
 		return {
@@ -728,21 +1193,31 @@ export class SimOrchestrator {
 
 		await this.db.transaction(async (tx) => {
 			if (stagedOrders.length > 0) {
-				await tx.insert(ordersTable).values(
-					stagedOrders.map(({ order, reasoning }) => ({
-						id: order.id,
-						tick: order.createdAtTick,
-						agentId: order.agentId,
-						symbol: order.symbol,
-						type: order.type,
-						side: order.side,
-						status: order.status,
-						price: order.type === "market" ? null : order.price.toNumber(),
-						quantity: order.qty,
-						filledQuantity: order.filledQty,
-						llmReasoning: reasoning,
-					})),
-				);
+				await tx
+					.insert(ordersTable)
+					.values(
+						stagedOrders.map(({ order, reasoning }) => ({
+							id: order.id,
+							tick: order.createdAtTick,
+							agentId: order.agentId,
+							symbol: order.symbol,
+							type: order.type,
+							side: order.side,
+							status: order.status,
+							price: order.type === "market" ? null : order.price.toNumber(),
+							quantity: order.qty,
+							filledQuantity: order.filledQty,
+							llmReasoning: reasoning,
+						})),
+					)
+					.onConflictDoUpdate({
+						target: ordersTable.id,
+						set: {
+							status: sql`excluded.status`,
+							filledQuantity: sql`excluded.filled_quantity`,
+							llmReasoning: sql`excluded.llm_reasoning`,
+						},
+					});
 			}
 
 			if (trades.length > 0) {
@@ -782,9 +1257,7 @@ export class SimOrchestrator {
 					.values({
 						...row,
 						lastLlmAt:
-							entry.state.lastLlmTick === null
-								? null
-								: new Date(simulatedTime),
+							entry.state.lastLlmTick === null ? null : new Date(simulatedTime),
 					})
 					.onConflictDoUpdate({
 						target: agentsTable.id,
@@ -913,18 +1386,30 @@ export class SimOrchestrator {
 			});
 	}
 
-	private buildSimConfig(activeGroupSize: number): SimConfig {
+	private buildRuntimeState(activeGroupSize?: number): SimRuntimeState {
+		const resolvedActiveGroupSize =
+			activeGroupSize ??
+			partitionAgentEntries(
+				this.agentRegistry,
+				this.simClock.simTick,
+				this.groupCount,
+			).active.length;
+
 		return {
 			isRunning: this.isRunning,
-			currentTick: this.simClock.simTick,
-			simulatedMarketTime: new Date(this.simClock.simulatedTime),
+			isTicking: this.isTicking,
+			simTick: this.simClock.simTick,
+			simulatedTime: new Date(this.simClock.simulatedTime),
+			activeGroupIndex: getActiveGroupIndex(
+				this.simClock.simTick,
+				this.groupCount,
+			),
 			speedMultiplier: this.speedMultiplier,
 			tickIntervalMs: this.tickIntervalMs,
-			activeGroupSize,
+			activeGroupSize: resolvedActiveGroupSize,
 			symbolCount: this.matchingEngine.getSymbols().length,
-			agentCount: this.agentRegistry.getAll().filter(
-				(entry) => entry.state.status === "active",
-			).length,
+			agentCount: this.agentRegistry.getAll().length,
+			lastSummary: this.lastSummary,
 		};
 	}
 }

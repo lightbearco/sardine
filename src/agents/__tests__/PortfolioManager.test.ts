@@ -1,6 +1,6 @@
+import { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { RequestContext } from "@mastra/core/request-context";
 import type { AgentConfig, AgentState } from "#/types/agent";
 import type { Trade } from "#/types/market";
 import { AgentRegistry } from "../AgentRegistry";
@@ -24,7 +24,7 @@ function makeConfig(id: string): AgentConfig {
 		sectors: ["tech"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "google/gemini-2.5-flash",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 0,
 		decisionParams: {},
 	};
@@ -248,9 +248,15 @@ describe("PortfolioManager", () => {
 
 		expect(registry.get("buyer")?.state.positions.get("AAPL")?.qty).toBe(19);
 		expect(
-			registry.get("buyer")?.state.positions.get("AAPL")?.avgCost.eq(
-				new Decimal("36").plus(new Decimal("60")).plus(new Decimal("108")).div(19),
-			),
+			registry
+				.get("buyer")
+				?.state.positions.get("AAPL")
+				?.avgCost.eq(
+					new Decimal("36")
+						.plus(new Decimal("60"))
+						.plus(new Decimal("108"))
+						.div(19),
+				),
 		).toBe(true);
 	});
 
@@ -312,12 +318,8 @@ describe("PortfolioManager", () => {
 			),
 		).toThrow("Unknown buyer agent ID: missing");
 
-		expect(() =>
-			manager.reconcile(
-				[makeTrade()],
-				registry,
-				new Map(),
-			),
-		).toThrow("Missing latest price for symbol: AAPL");
+		expect(() => manager.reconcile([makeTrade()], registry, new Map())).toThrow(
+			"Missing latest price for symbol: AAPL",
+		);
 	});
 });

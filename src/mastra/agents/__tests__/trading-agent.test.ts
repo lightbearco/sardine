@@ -1,21 +1,24 @@
-import { RequestContext } from "@mastra/core/request-context";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { RequestContext } from "@mastra/core/request-context";
 import { describe, expect, it } from "vitest";
 import {
 	tradingAgent,
 	tradingDecisionSchema,
 } from "#/mastra/agents/trading-agent";
-import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import { createToolHarness } from "#/mastra/tools/__tests__/test-helpers";
+import type { TradingRequestContextValues } from "#/mastra/trading-context";
 
-function logTradingDecision(label: string, result: {
-	reasoningText?: string;
-	object: {
-		reasoning: string;
-		ordersPlaced: unknown[];
-		autopilotDirective: unknown;
-	};
-}) {
+function logTradingDecision(
+	label: string,
+	result: {
+		reasoningText?: string;
+		object: {
+			reasoning: string;
+			ordersPlaced: unknown[];
+			autopilotDirective: unknown;
+		};
+	},
+) {
 	console.log(`\n[${label}] Agent reasoning:\n${result.object.reasoning}`);
 
 	if (result.reasoningText) {
@@ -64,17 +67,23 @@ describe("tradingAgent", () => {
 			configOverrides: {
 				persona: "You are an aggressive event-driven trader.",
 				currentAgenda: "Rotate into post-earnings dislocations.",
-				investmentThesis: "High-quality growth should mean-revert after sharp gaps.",
+				investmentThesis:
+					"High-quality growth should mean-revert after sharp gaps.",
 				quarterlyGoal: "Capture event alpha while controlling gap risk.",
 				personalityTraits: ["fast-moving", "conviction-led"],
 				behavioralBiases: ["recency bias", "overconfidence"],
-				constraints: ["Do not exceed 5% position sizing.", "Avoid restricted names."],
+				constraints: [
+					"Do not exceed 5% position sizing.",
+					"Avoid restricted names.",
+				],
 			},
 		});
 
 		const instructions = getInstructions(requestContext);
 
-		expect(instructions).toContain("You are an aggressive event-driven trader.");
+		expect(instructions).toContain(
+			"You are an aggressive event-driven trader.",
+		);
 		expect(instructions).toContain("Rotate into post-earnings dislocations.");
 		expect(instructions).toContain(
 			"High-quality growth should mean-revert after sharp gaps.",
@@ -132,9 +141,9 @@ describe("tradingAgent", () => {
 			provider?: string;
 		};
 
-		expect(sonnetModel.modelId).toBe("gemini-2.5-pro");
+		expect(sonnetModel.modelId).toBe("gemini-3.1-flash-lite-preview");
 		expect(sonnetModel.provider).toBe("google.generative-ai");
-		expect(haikuModel.modelId).toBe("gemini-2.5-flash");
+		expect(haikuModel.modelId).toBe("gemini-3.1-flash-lite-preview");
 		expect(haikuModel.provider).toBe("google.generative-ai");
 	});
 

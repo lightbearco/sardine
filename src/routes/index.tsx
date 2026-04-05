@@ -1,87 +1,69 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowRightIcon, LayoutDashboardIcon, RadioTowerIcon } from "lucide-react";
+import { Button } from "#/components/ui/button";
 
-export const Route = createFileRoute('/')({ component: App })
+export const Route = createFileRoute("/")({
+	component: LandingPage,
+});
 
-function App() {
-  return (
-    <main className="page-wrap px-4 pb-8 pt-14">
-      <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-6 py-10 sm:px-10 sm:py-14">
-        <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(79,184,178,0.32),transparent_66%)]" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(47,106,74,0.18),transparent_66%)]" />
-        <p className="island-kicker mb-3">TanStack Start Base Template</p>
-        <h1 className="display-title mb-5 max-w-3xl text-4xl leading-[1.02] font-bold tracking-tight text-[var(--sea-ink)] sm:text-6xl">
-          Start simple, ship quickly.
-        </h1>
-        <p className="mb-8 max-w-2xl text-base text-[var(--sea-ink-soft)] sm:text-lg">
-          This base starter intentionally keeps things light: two routes, clean
-          structure, and the essentials you need to build from scratch.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="/about"
-            className="rounded-full border border-[rgba(50,143,151,0.3)] bg-[rgba(79,184,178,0.14)] px-5 py-2.5 text-sm font-semibold text-[var(--lagoon-deep)] no-underline transition hover:-translate-y-0.5 hover:bg-[rgba(79,184,178,0.24)]"
-          >
-            About This Starter
-          </a>
-          <a
-            href="https://tanstack.com/router"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full border border-[rgba(23,58,64,0.2)] bg-white/50 px-5 py-2.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:-translate-y-0.5 hover:border-[rgba(23,58,64,0.35)]"
-          >
-            Router Guide
-          </a>
-        </div>
-      </section>
-
-      <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          [
-            'Type-Safe Routing',
-            'Routes and links stay in sync across every page.',
-          ],
-          [
-            'Server Functions',
-            'Call server code from your UI without creating API boilerplate.',
-          ],
-          [
-            'Streaming by Default',
-            'Ship progressively rendered responses for faster experiences.',
-          ],
-          [
-            'Tailwind Native',
-            'Design quickly with utility-first styling and reusable tokens.',
-          ],
-        ].map(([title, desc], index) => (
-          <article
-            key={title}
-            className="island-shell feature-card rise-in rounded-2xl p-5"
-            style={{ animationDelay: `${index * 90 + 80}ms` }}
-          >
-            <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">
-              {title}
-            </h2>
-            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">{desc}</p>
-          </article>
-        ))}
-      </section>
-
-      <section className="island-shell mt-8 rounded-2xl p-6">
-        <p className="island-kicker mb-2">Quick Start</p>
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
-          <li>
-            Edit <code>src/routes/index.tsx</code> to customize the home page.
-          </li>
-          <li>
-            Update <code>src/components/Header.tsx</code> and{' '}
-            <code>src/components/Footer.tsx</code> for brand links.
-          </li>
-          <li>
-            Add routes in <code>src/routes</code> and tweak visual tokens in{' '}
-            <code>src/styles.css</code>.
-          </li>
-        </ul>
-      </section>
-    </main>
-  )
+function LandingPage() {
+	return (
+		<main className="page-wrap px-4 pb-16 pt-12">
+			<section className="rounded-2xl border bg-card p-8 text-card-foreground shadow-sm sm:p-10">
+				<div className="max-w-3xl space-y-5">
+					<div className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs font-medium uppercase tracking-[0.16em] text-secondary-foreground">
+						<RadioTowerIcon className="size-3.5" />
+						Sardine Terminal
+					</div>
+					<div className="space-y-3">
+						<h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
+							Realtime market simulation, one dashboard away.
+						</h1>
+						<p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+							Open the trading terminal to monitor the order book, candles,
+							agent decisions, and trade flow in a single full-screen workspace.
+						</p>
+					</div>
+					<div className="flex flex-wrap gap-3">
+						<Button asChild size="lg">
+							<Link to="/dashboard">
+								<LayoutDashboardIcon className="size-4" />
+								Open Dashboard
+								<ArrowRightIcon className="size-4" />
+							</Link>
+						</Button>
+						<Button asChild variant="secondary" size="lg">
+							<Link to="/about">About Sardine</Link>
+						</Button>
+					</div>
+					<div className="grid gap-3 pt-4 sm:grid-cols-3">
+						<div className="rounded-xl border bg-secondary/40 p-4">
+							<div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+								Market View
+							</div>
+							<div className="mt-2 text-sm text-foreground">
+								Candles, order book, time and sales, and market stats in one layout.
+							</div>
+						</div>
+						<div className="rounded-xl border bg-secondary/40 p-4">
+							<div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+								Agent View
+							</div>
+							<div className="mt-2 text-sm text-foreground">
+								Track live decisions, signals, failures, and execution flow.
+							</div>
+						</div>
+						<div className="rounded-xl border bg-secondary/40 p-4">
+							<div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+								Control View
+							</div>
+							<div className="mt-2 text-sm text-foreground">
+								Manage sim state, tick progression, and playback speed from the top bar.
+							</div>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+	);
 }

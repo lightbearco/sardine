@@ -24,13 +24,13 @@ describe("generateAgentConfigs", () => {
 			id: "goldman-sachs",
 			name: "Goldman Sachs",
 			tier: "tier1",
-			model: "google/gemini-2.5-pro",
+			model: "google/gemini-3.1-flash-lite-preview",
 		});
 		expect(configs[1]).toMatchObject({
 			id: "citadel-securities",
 			name: "Citadel Securities",
 			tier: "tier1",
-			model: "google/gemini-2.5-pro",
+			model: "google/gemini-3.1-flash-lite-preview",
 		});
 
 		const personas = new Set(configs.map((config) => config.persona));

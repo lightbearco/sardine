@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Order, Trade } from "#/types/market";
+import type { Order, OrderSide, OrderStatus, OrderType, Trade } from "#/types/market";
+import type { AutopilotDirective } from "#/types/agent";
 
 // ── Sim Config ──
 
@@ -12,6 +13,20 @@ export interface SimConfig {
 	activeGroupSize: number;
 	symbolCount: number;
 	agentCount: number;
+}
+
+export interface SimRuntimeState {
+	isRunning: boolean;
+	isTicking: boolean;
+	simTick: number;
+	simulatedTime: Date;
+	activeGroupIndex: number;
+	speedMultiplier: number;
+	tickIntervalMs: number;
+	activeGroupSize: number;
+	symbolCount: number;
+	agentCount: number;
+	lastSummary: TickSummary | null;
 }
 
 // ── World Events ──
@@ -67,6 +82,7 @@ export const injectWorldEventPayloadSchema = z.object({
 
 export const startSimCommandPayloadSchema = z.object({});
 export const pauseSimCommandPayloadSchema = z.object({});
+export const stepSimCommandPayloadSchema = z.object({});
 export const setSpeedCommandPayloadSchema = z.object({
 	speedMultiplier: z.number().positive(),
 });
@@ -82,6 +98,7 @@ export type SimCommandType =
 	| "inject_world_event"
 	| "start"
 	| "pause"
+	| "step"
 	| "set_speed"
 	| "set_tick_interval";
 
@@ -89,6 +106,7 @@ export const simCommandTypeSchema = z.enum([
 	"inject_world_event",
 	"start",
 	"pause",
+	"step",
 	"set_speed",
 	"set_tick_interval",
 ]);
@@ -97,6 +115,7 @@ export const simCommandPayloadSchemaByType = {
 	inject_world_event: injectWorldEventPayloadSchema,
 	start: startSimCommandPayloadSchema,
 	pause: pauseSimCommandPayloadSchema,
+	step: stepSimCommandPayloadSchema,
 	set_speed: setSpeedCommandPayloadSchema,
 	set_tick_interval: setTickIntervalCommandPayloadSchema,
 } as const;
@@ -117,6 +136,68 @@ export interface AgentSignal {
 	reasoning: string | null;
 	tick: number;
 }
+
+export type AgentFailureReason =
+	| "schema_validation_failed"
+	| "timeout"
+	| "llm_error";
+
+export interface AgentDecisionOrder {
+	orderId: string;
+	symbol: string;
+	side: OrderSide;
+	type: OrderType;
+	qty: number;
+	price: string;
+	status: OrderStatus;
+	filledQty: number;
+	rejectionReason?: string;
+}
+
+interface AgentEventBase {
+	agentId: string;
+	agentName: string;
+	tick: number;
+}
+
+export interface AgentRunStartedEvent extends AgentEventBase {
+	type: "run_started";
+}
+
+export interface AgentThinkingDeltaEvent extends AgentEventBase {
+	type: "thinking_delta";
+	delta: string;
+	transcript: string;
+}
+
+export interface AgentDecisionEvent extends AgentEventBase {
+	type: "decision";
+	decision: {
+		reasoning: string;
+		ordersPlaced: AgentDecisionOrder[];
+		autopilotDirective: AutopilotDirective;
+	};
+}
+
+export interface AgentSignalEvent extends AgentEventBase {
+	type: "signal";
+	signal: AgentSignal;
+}
+
+export interface AgentFailedEvent extends AgentEventBase {
+	type: "failed";
+	reason: AgentFailureReason;
+	message: string;
+	transcript: string;
+	fallbackDirective: AutopilotDirective;
+}
+
+export type AgentEvent =
+	| AgentRunStartedEvent
+	| AgentThinkingDeltaEvent
+	| AgentDecisionEvent
+	| AgentSignalEvent
+	| AgentFailedEvent;
 
 export interface StagedOrderResult {
 	order: Order;

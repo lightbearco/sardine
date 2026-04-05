@@ -1,5 +1,5 @@
-import type Decimal from "decimal.js";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import type Decimal from "decimal.js";
 import type { Order } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 

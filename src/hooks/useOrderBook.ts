@@ -2,20 +2,23 @@ import { useState, useEffect } from "react";
 import { useSimWebSocket } from "./useSimWebSocket";
 import type { LOBSnapshot } from "#/types/market";
 
-export function useOrderBook(symbol: string) {
+export function useOrderBook(
+	symbol: string,
+	initialSnapshot: LOBSnapshot | null = null,
+) {
   const { subscribe, isConnected } = useSimWebSocket();
-  const [snapshot, setSnapshot] = useState<LOBSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<LOBSnapshot | null>(initialSnapshot);
 
   useEffect(() => {
     if (!symbol) return;
-    setSnapshot(null);
+    setSnapshot(initialSnapshot);
     
     const unsubscribe = subscribe(`lob:${symbol}`, (data: LOBSnapshot) => {
       setSnapshot(data);
     });
 
     return unsubscribe;
-  }, [symbol, subscribe]);
+  }, [initialSnapshot, symbol, subscribe]);
 
   return { snapshot, isConnected };
 }

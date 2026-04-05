@@ -1,12 +1,10 @@
+import { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { RequestContext } from "@mastra/core/request-context";
 import type { AgentConfig, AgentState } from "#/types/agent";
 import { AgentRegistry, type AgentRegistryEntry } from "../AgentRegistry";
 
-function makeConfig(
-	overrides: Partial<AgentConfig> = {},
-): AgentConfig {
+function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		id: "agent-1",
 		name: "Agent 1",
@@ -24,16 +22,14 @@ function makeConfig(
 		sectors: ["tech"],
 		risk: 0.5,
 		capital: 100_000,
-		model: "google/gemini-2.5-flash",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 0,
 		decisionParams: { threshold: 0.1 },
 		...overrides,
 	};
 }
 
-function makeState(
-	overrides: Partial<AgentState> = {},
-): AgentState {
+function makeState(overrides: Partial<AgentState> = {}): AgentState {
 	return {
 		id: "agent-1",
 		name: "Agent 1",
@@ -79,9 +75,12 @@ function makeState(
 	};
 }
 
-function makeEntry(overrides: Partial<AgentRegistryEntry> = {}): AgentRegistryEntry {
+function makeEntry(
+	overrides: Partial<AgentRegistryEntry> = {},
+): AgentRegistryEntry {
 	const config = overrides.config ?? makeConfig();
-	const state = overrides.state ?? makeState({ id: config.id, name: config.name });
+	const state =
+		overrides.state ?? makeState({ id: config.id, name: config.name });
 	const requestContext =
 		overrides.requestContext ?? new RequestContext([["agent-id", config.id]]);
 
@@ -165,9 +164,9 @@ describe("AgentRegistry", () => {
 	it("throws when updating a missing agent or using an invalid group count", () => {
 		const registry = new AgentRegistry();
 
-		expect(() =>
-			registry.updateState("missing", { lastLlmTick: 2 }),
-		).toThrow("Unknown agent ID: missing");
+		expect(() => registry.updateState("missing", { lastLlmTick: 2 })).toThrow(
+			"Unknown agent ID: missing",
+		);
 		expect(() => registry.getActiveGroup(1, 0)).toThrow(
 			"groupCount must be greater than 0",
 		);
@@ -273,7 +272,9 @@ describe("AgentRegistry", () => {
 
 		registry.register(entry);
 
-		expect(registry.get("agent-1")?.state.openOrders.has("open-order")).toBe(true);
+		expect(registry.get("agent-1")?.state.openOrders.has("open-order")).toBe(
+			true,
+		);
 		expect(registry.get("agent-1")?.state.openOrders.has("filled-order")).toBe(
 			false,
 		);
@@ -283,7 +284,7 @@ describe("AgentRegistry", () => {
 			expect.objectContaining({
 				id: "agent-1",
 				entityType: "investment-bank",
-				modelId: "google/gemini-2.5-flash",
+				modelId: "google/gemini-3.1-flash-lite-preview",
 				startingCapital: 100_000,
 				currentCash: 1000,
 				currentNav: 1500,

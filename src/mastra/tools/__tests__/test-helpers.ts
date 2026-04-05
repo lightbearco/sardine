@@ -37,7 +37,7 @@ export function makeTestConfig(
 		sectors: ["Technology"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "google/gemini-2.5-flash",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 0,
 		decisionParams: {
 			maxPositionPct: 0.2,
@@ -71,7 +71,8 @@ export function createToolHarness(options: HarnessOptions = {}) {
 	};
 
 	const registry = new AgentRegistry();
-	const storedRequestContext = new RequestContext<TradingRequestContextValues>();
+	const storedRequestContext =
+		new RequestContext<TradingRequestContextValues>();
 	storedRequestContext.set("agent-id", config.id);
 	storedRequestContext.set("agent-name", config.name);
 	storedRequestContext.set("entity-type", config.entityType);
@@ -97,7 +98,10 @@ export function createToolHarness(options: HarnessOptions = {}) {
 	storedRequestContext.set("restricted-symbols", [...config.restrictedSymbols]);
 
 	if (typeof config.decisionParams.maxPositionPct === "number") {
-		storedRequestContext.set("max-position-pct", config.decisionParams.maxPositionPct);
+		storedRequestContext.set(
+			"max-position-pct",
+			config.decisionParams.maxPositionPct,
+		);
 	}
 
 	if (typeof config.decisionParams.maxInventoryPerName === "number") {
@@ -110,7 +114,9 @@ export function createToolHarness(options: HarnessOptions = {}) {
 	if (typeof config.decisionParams.inventoryTolerance === "number") {
 		storedRequestContext.set(
 			"max-inventory-per-name",
-			Number((config.capital * config.decisionParams.inventoryTolerance).toFixed(2)),
+			Number(
+				(config.capital * config.decisionParams.inventoryTolerance).toFixed(2),
+			),
 		);
 	}
 

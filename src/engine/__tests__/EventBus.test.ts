@@ -60,29 +60,37 @@ describe("EventBus", () => {
 		const signalListener = vi.fn();
 		const simStateListener = vi.fn();
 
-		bus.on("agent-signal", signalListener);
+		bus.on("agent-event", signalListener);
 		bus.on("sim-state", simStateListener);
 
-		bus.emit("agent-signal", {
+		bus.emit("agent-event", {
+			type: "signal",
 			agentId: "agent-1",
 			agentName: "Agent 1",
-			side: "buy",
-			symbol: "AAPL",
-			price: 100,
-			qty: 5,
-			reasoning: "Momentum is improving.",
 			tick: 2,
+			signal: {
+				agentId: "agent-1",
+				agentName: "Agent 1",
+				side: "buy",
+				symbol: "AAPL",
+				price: 100,
+				qty: 5,
+				reasoning: "Momentum is improving.",
+				tick: 2,
+			},
 		});
 		bus.emit("sim-state", {
 			isRunning: true,
-			currentTick: 2,
-			simulatedMarketTime: new Date("2026-04-04T13:30:00.000Z"),
+			isTicking: false,
+			simTick: 2,
+			simulatedTime: new Date("2026-04-04T13:30:00.000Z"),
+			activeGroupIndex: 0,
 			speedMultiplier: 2,
 			tickIntervalMs: 500,
 			activeGroupSize: 5,
 			symbolCount: 10,
 			agentCount: 50,
-			tickDurationMs: 250,
+			lastSummary: null,
 		});
 
 		expect(signalListener).toHaveBeenCalledOnce();

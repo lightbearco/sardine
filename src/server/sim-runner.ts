@@ -1,20 +1,103 @@
-import { AgentRegistry } from "#/agents/AgentRegistry";
+import Decimal from "decimal.js";
+import { generateAgentConfigs, spawnAgents } from "#/agents/factory";
+import { serializeAgentEntriesForDb } from "#/agents/persistence";
 import { db } from "#/db/index";
+import {
+	agents as agentsTable,
+	commands as commandsTable,
+	orders as ordersTable,
+	trades as tradesTable,
+	ticks as ticksTable,
+	simConfig as simConfigTable,
+} from "#/db/schema";
 import { EventBus } from "#/engine/bus/EventBus";
 import { PublicationBus } from "#/engine/bus/PublicationBus";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SimClock } from "#/engine/sim/SimClock";
 import { SimOrchestrator } from "#/engine/sim/SimOrchestrator";
+import { DEV_TICKERS, SIM_DEFAULTS } from "#/lib/constants";
+import type { Order } from "#/types/market";
 import { tradingAgent } from "#/mastra/agents/trading-agent";
 import { broadcaster } from "./ws/broadcaster";
 import { startSimWebSocketServer } from "./ws/SimWebSocketServer";
 
 async function main() {
-	const agentRegistry = new AgentRegistry();
+	// Bootstrap: initialize symbols, seed order books, spawn agents
+	const symbols = DEV_TICKERS.map((t) => t.symbol);
+
+	const matchingEngine = new MatchingEngine();
+	matchingEngine.initialize(symbols);
+	const seedOrders: Order[] = [];
+	for (const symbol of symbols) {
+		seedOrders.push(
+			...matchingEngine.seedBook(symbol, new Decimal(150), new Decimal("0.10"), 5, 100, 0),
+		);
+	}
+
+	const agentCount = Number(process.env.SIM_AGENT_COUNT) || SIM_DEFAULTS.agentCount;
+	const groupCount = Math.min(SIM_DEFAULTS.groupCount, agentCount);
+	const agentConfigs = generateAgentConfigs(42, agentCount);
+	const agentRegistry = spawnAgents(agentConfigs, groupCount);
+
+	// Reset sim state from any previous run
+	console.log("Clearing stale sim data...");
+	await db.delete(tradesTable);
+	await db.delete(ordersTable);
+	await db.delete(ticksTable);
+	await db.delete(commandsTable);
+	await db.delete(simConfigTable);
+	await db.delete(agentsTable);
+
+	// Persist bootstrap state to DB so FK constraints are satisfied
+	console.log("Persisting bootstrap agents and seed orders to DB...");
+	const agentRows = serializeAgentEntriesForDb(agentRegistry.getAll());
+	// Insert the seed liquidity provider as a synthetic agent row
+	await db
+		.insert(agentsTable)
+		.values([
+			{
+				id: "market-maker-seed",
+				name: "Seed Liquidity Provider",
+				tier: "tier3",
+				status: "active",
+				entityType: "market-maker",
+				strategyType: "depth-provider",
+				riskTolerance: 0,
+				startingCapital: 0,
+				currentCash: 0,
+				currentNav: 0,
+				positions: {},
+				parameters: {},
+				llmGroup: 0,
+			},
+			...agentRows,
+		])
+		.onConflictDoNothing();
+
+	if (seedOrders.length > 0) {
+		await db
+			.insert(ordersTable)
+			.values(
+				seedOrders.map((order) => ({
+					id: order.id,
+					tick: order.createdAtTick,
+					agentId: order.agentId,
+					symbol: order.symbol,
+					type: order.type,
+					side: order.side,
+					status: order.status,
+					price: order.price.toNumber(),
+					quantity: order.qty,
+					filledQuantity: order.filledQty,
+				})),
+			)
+			.onConflictDoNothing();
+	}
+	console.log(`Bootstrapped ${agentRows.length} agents, ${seedOrders.length} seed orders across ${symbols.length} symbols`);
+
 	const eventBus = new EventBus();
 	const publicationBus = new PublicationBus();
-	const matchingEngine = new MatchingEngine();
-	const simClock = new SimClock(5);
+	const simClock = new SimClock(SIM_DEFAULTS.simulatedTickDuration);
 
 	const orchestrator = new SimOrchestrator(
 		matchingEngine,
@@ -36,8 +119,8 @@ async function main() {
 		broadcaster.broadcast(`lob:${snapshot.symbol}`, snapshot);
 	});
 
-	eventBus.on("agent-signal", (signal) => {
-		broadcaster.broadcast("agents", signal);
+	eventBus.on("agent-event", (event) => {
+		broadcaster.broadcast("agents", event);
 	});
 
 	// The orchestrator.tick() returns a TickSummary, so we can broadcast it right after the await,
@@ -55,21 +138,23 @@ async function main() {
 		const state = orchestrator.getState();
 		if (!state.isRunning) {
 			// Process control commands (start/pause/speed) even when paused
-			const processed = await orchestrator.processControlCommands();
-			if (processed) {
+			const controlOutcome = await orchestrator.processControlCommands();
+			if (controlOutcome.processed) {
 				// Broadcast updated state so clients know about play/pause changes
-				const newState = orchestrator.getState();
-				broadcaster.broadcast("sim", {
-					durationMs: 0,
-					orderCount: 0,
-					tradeCount: 0,
-					activeAgents: 0,
-					simTick: newState.simTick,
-					simulatedTime: newState.simulatedTime,
-					trades: [],
-					isRunning: newState.isRunning,
-				});
-				if (newState.isRunning) continue; // resumed — jump to tick loop
+				broadcaster.broadcast("sim", orchestrator.getRuntimeState());
+				if (orchestrator.getState().isRunning) continue; // resumed — jump to tick loop
+			}
+
+			if (controlOutcome.stepCount > 0) {
+				for (let i = 0; i < controlOutcome.stepCount; i += 1) {
+					try {
+						await orchestrator.tick({ skipPendingCommands: true });
+						broadcaster.broadcast("sim", orchestrator.getRuntimeState());
+					} catch (error) {
+						console.error("Error during step:", error);
+						break;
+					}
+				}
 			}
 			await new Promise((resolve) => setTimeout(resolve, 500));
 			continue;
@@ -77,8 +162,8 @@ async function main() {
 
 		const tickStart = Date.now();
 		try {
-			const summary = await orchestrator.tick();
-			broadcaster.broadcast("sim", summary);
+			await orchestrator.tick();
+			broadcaster.broadcast("sim", orchestrator.getRuntimeState());
 		} catch (error) {
 			console.error("Error during tick:", error);
 		}

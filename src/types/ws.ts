@@ -1,6 +1,6 @@
 import type { OHLCVBar, LOBSnapshot, Trade } from "./market";
 import type { ResearchNote } from "./research";
-import type { SimConfig } from "./sim";
+import type { AgentEvent, SimRuntimeState } from "./sim";
 
 // ── Message Types ──
 
@@ -54,16 +54,7 @@ export interface TradeUpdateMessage {
 export interface AgentSignalMessage {
 	type: WsMessageType.AgentSignal;
 	channel: "agents";
-	data: {
-		agentId: string;
-		agentName: string;
-		side: "buy" | "sell";
-		symbol: string;
-		price: number;
-		qty: number;
-		reasoning: string | null;
-		tick: number;
-	};
+	data: AgentEvent;
 }
 
 export interface ResearchPublishedMessage {
@@ -75,7 +66,7 @@ export interface ResearchPublishedMessage {
 export interface SimStateMessage {
 	type: WsMessageType.SimState;
 	channel: "sim";
-	data: SimConfig & { tickDurationMs: number };
+	data: SimRuntimeState;
 }
 
 export interface WorldEventAppliedMessage {
@@ -88,12 +79,12 @@ export interface WorldEventAppliedMessage {
 
 export interface SubscribeMessage {
 	type: WsMessageType.Subscribe;
-	channels: WsChannel[];
+	channel: WsChannel;
 }
 
 export interface UnsubscribeMessage {
 	type: WsMessageType.Unsubscribe;
-	channels: WsChannel[];
+	channel: WsChannel;
 }
 
 export type SimCommandAction = "start" | "pause" | "step" | "setSpeed";

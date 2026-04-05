@@ -76,7 +76,7 @@ function makeConfig(
 		sectors: ["Technology"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "anthropic/claude-haiku-4-5",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 0,
 		decisionParams: {},
 		...overrides,
@@ -250,7 +250,10 @@ function createTradingAgentDouble(
 		(
 			prompt: string,
 			options: Record<string, unknown>,
-		) => Promise<{ object: unknown }>
+		) => Promise<{
+			object: unknown;
+			chunks?: Array<{ type: string; payload?: { text?: string } }>;
+		}>
 	>,
 ) {
 	let inFlight = 0;
@@ -268,7 +271,7 @@ function createTradingAgentDouble(
 		get contexts() {
 			return contexts;
 		},
-		generate: async (prompt: string, options: Record<string, unknown>) => {
+		stream: async (prompt: string, options: Record<string, unknown>) => {
 			const requestContext = options.requestContext as RequestContext<TradingRequestContextValues>;
 			const agentId = requestContext.get("agent-id");
 			if (!agentId) {
@@ -281,7 +284,15 @@ function createTradingAgentDouble(
 			maxInFlight = Math.max(maxInFlight, inFlight);
 
 			try {
-				return await handlers[agentId](prompt, options);
+				const result = await handlers[agentId](prompt, options);
+				return {
+					fullStream: (async function* () {
+						for (const chunk of result.chunks ?? []) {
+							yield chunk;
+						}
+					})(),
+					object: Promise.resolve(result.object),
+				};
 			} finally {
 				inFlight -= 1;
 			}
@@ -348,7 +359,7 @@ describe("SimOrchestrator", () => {
 		const simStateListener = vi.fn();
 		eventBus.on("trade", tradeListener);
 		eventBus.on("ohlcv", ohlcvListener);
-		eventBus.on("agent-signal", signalListener);
+		eventBus.on("agent-event", signalListener);
 		eventBus.on("world-event", worldEventListener);
 		eventBus.on("sim-state", simStateListener);
 
@@ -414,6 +425,12 @@ describe("SimOrchestrator", () => {
 
 		const tradingAgent = createTradingAgentDouble({
 			"active-agent": async () => ({
+				chunks: [
+					{
+						type: "text-delta",
+						payload: { text: "AAPL looks attractive after the latest note." },
+					},
+				],
 				object: {
 					reasoning: "AAPL looks attractive after the latest note.",
 					ordersPlaced: [
@@ -456,7 +473,7 @@ describe("SimOrchestrator", () => {
 		expect(summary.simTick).toBe(1);
 		expect(tradeListener).toHaveBeenCalledOnce();
 		expect(ohlcvListener).toHaveBeenCalledOnce();
-		expect(signalListener).toHaveBeenCalledOnce();
+		expect(signalListener).toHaveBeenCalled();
 		expect(worldEventListener).toHaveBeenCalledOnce();
 		expect(simStateListener).toHaveBeenCalledOnce();
 
@@ -579,6 +596,9 @@ describe("SimOrchestrator", () => {
 		const engine = new MatchingEngine();
 		engine.initialize(["AAPL"]);
 		const { db, state } = createDbDouble();
+		const eventBus = new EventBus();
+		const agentEventListener = vi.fn();
+		eventBus.on("agent-event", agentEventListener);
 		const tradingAgent = createTradingAgentDouble({
 			"active-agent": async (_prompt, options) =>
 				new Promise((_, reject) => {
@@ -594,7 +614,7 @@ describe("SimOrchestrator", () => {
 			registry,
 			new SimClock(5),
 			new PublicationBus(),
-			new EventBus(),
+			eventBus,
 			db as never,
 			tradingAgent,
 			{ llmTimeoutMs: 5, groupCount: 2 },
@@ -606,6 +626,123 @@ describe("SimOrchestrator", () => {
 		expect(summary.tradeCount).toBe(0);
 		expect(entry.state.lastAutopilotDirective?.holdPositions).toEqual(["AAPL"]);
 		expect(state.insertedOrders).toEqual([]);
+		expect(agentEventListener).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "failed",
+				reason: "timeout",
+				agentId: "active-agent",
+			}),
+		);
+	});
+
+	it("emits a schema failure event and applies the fallback directive", async () => {
+		const registry = new AgentRegistry();
+		const entry = registerAgent(registry, "active-agent", {
+			config: { llmGroup: 1 },
+			state: {
+				positions: new Map([
+					[
+						"AAPL",
+						{
+							qty: 2,
+							avgCost: new Decimal("101"),
+						},
+					],
+				]),
+			},
+		});
+		const engine = new MatchingEngine();
+		engine.initialize(["AAPL"]);
+		const { db, state } = createDbDouble();
+		const eventBus = new EventBus();
+		const agentEvents: Array<Record<string, unknown>> = [];
+		eventBus.on("agent-event", (event) => {
+			agentEvents.push(event as unknown as Record<string, unknown>);
+		});
+
+		const tradingAgent = createTradingAgentDouble({
+			"active-agent": async () => ({
+				object: {
+					reasoning: 42,
+					ordersPlaced: [],
+					autopilotDirective: {
+						standingOrders: [],
+						holdPositions: [],
+					},
+				},
+			}),
+		});
+
+		const orchestrator = new SimOrchestrator(
+			engine,
+			registry,
+			new SimClock(5),
+			new PublicationBus(),
+			eventBus,
+			db as never,
+			tradingAgent,
+			{ groupCount: 2 },
+		);
+
+		const summary = await orchestrator.step();
+
+		expect(summary.orderCount).toBe(0);
+		expect(state.insertedOrders).toEqual([]);
+		expect(entry.state.lastAutopilotDirective?.holdPositions).toEqual(["AAPL"]);
+		expect(agentEvents).toContainEqual(
+			expect.objectContaining({
+				type: "failed",
+				reason: "schema_validation_failed",
+				agentId: "active-agent",
+			}),
+		);
+	});
+
+	it("processes step commands without resuming the simulation", async () => {
+		const registry = new AgentRegistry();
+		const engine = new MatchingEngine();
+		engine.initialize(["AAPL"]);
+		const { db, state } = createDbDouble([
+			{
+				id: 1,
+				type: "step",
+				payload: {},
+				status: "pending",
+				resultMessage: null,
+				createdAt: new Date(),
+				processedAt: null,
+			},
+			{
+				id: 2,
+				type: "set_speed",
+				payload: { speedMultiplier: 3 },
+				status: "pending",
+				resultMessage: null,
+				createdAt: new Date(),
+				processedAt: null,
+			},
+		]);
+
+		const orchestrator = new SimOrchestrator(
+			engine,
+			registry,
+			new SimClock(5),
+			new PublicationBus(),
+			new EventBus(),
+			db as never,
+			createTradingAgentDouble({}),
+			{ groupCount: 2 },
+		);
+
+		const outcome = await orchestrator.processControlCommands();
+
+		expect(outcome).toEqual({ processed: true, stepCount: 1 });
+		expect(orchestrator.getState().isRunning).toBe(false);
+		expect(state.commands.map((command) => command.status)).toEqual([
+			"processed",
+			"processed",
+		]);
+		expect(state.simConfig?.speedMultiplier).toBe(3);
 	});
 
 	it("honors the configured LLM concurrency limit", async () => {
@@ -724,6 +861,117 @@ describe("SimOrchestrator", () => {
 
 		expect(state.commands[0]?.status).toBe("processed");
 		expect(entry.state.researchInbox.size).toBe(inboxSizeAfterFirstTick);
+	});
+
+	it("rejects unsupported symbols without crashing the tick", async () => {
+		const registry = new AgentRegistry();
+		const inactiveEntry = registerAgent(registry, "inactive-agent", {
+			config: { llmGroup: 0 },
+			autopilotDirective: {
+				standingOrders: [
+					{
+						symbol: "XOM",
+						side: "buy",
+						type: "limit",
+						price: 149.9,
+						qty: 5,
+					},
+				],
+				holdPositions: [],
+			},
+		});
+		registerAgent(registry, "active-agent", {
+			config: { llmGroup: 1 },
+		});
+		const engine = new MatchingEngine();
+		engine.initialize(["AAPL"]);
+		const { db, state } = createDbDouble();
+		const tradingAgent = createTradingAgentDouble({
+			"active-agent": async () => ({
+				object: {
+					reasoning: "wait",
+					ordersPlaced: [],
+					autopilotDirective: {
+						standingOrders: [],
+						holdPositions: [],
+					},
+				},
+			}),
+		});
+		const orchestrator = new SimOrchestrator(
+			engine,
+			registry,
+			new SimClock(5),
+			new PublicationBus(),
+			new EventBus(),
+			db as never,
+			tradingAgent,
+			{ groupCount: 2 },
+		);
+
+		const summary = await orchestrator.step();
+
+		expect(summary.orderCount).toBe(1);
+		expect(summary.tradeCount).toBe(0);
+		expect(state.insertedOrders).toHaveLength(1);
+		expect(state.insertedOrders[0]?.symbol).toBe("XOM");
+		expect(state.insertedOrders[0]?.status).toBe("cancelled");
+		expect(inactiveEntry.state.openOrders.size).toBe(0);
+	});
+
+	it("replays duplicate open order ids safely without re-matching", async () => {
+		const registry = new AgentRegistry();
+		const entry = registerAgent(registry, "active-agent", {
+			config: { llmGroup: 0 },
+		});
+		const engine = new MatchingEngine();
+		engine.initialize(["AAPL"]);
+		const { db, state } = createDbDouble();
+		const tradingAgent = createTradingAgentDouble({
+			"active-agent": async () => ({
+				object: {
+					reasoning: "Keep the resting bid in place.",
+					ordersPlaced: [
+						{
+							orderId: "repeat-order",
+							symbol: "AAPL",
+							side: "buy",
+							type: "limit",
+							qty: 5,
+							price: "149.95",
+							status: "pending",
+							filledQty: 0,
+							trades: [],
+						},
+					],
+					autopilotDirective: {
+						standingOrders: [],
+						holdPositions: ["AAPL"],
+					},
+				},
+			}),
+		});
+		const orchestrator = new SimOrchestrator(
+			engine,
+			registry,
+			new SimClock(5),
+			new PublicationBus(),
+			new EventBus(),
+			db as never,
+			tradingAgent,
+			{ groupCount: 1 },
+		);
+
+		const firstSummary = await orchestrator.step();
+		const secondSummary = await orchestrator.step();
+
+		expect(firstSummary.orderCount).toBe(1);
+		expect(secondSummary.orderCount).toBe(1);
+		expect(entry.state.openOrders.size).toBe(1);
+		expect(entry.state.openOrders.has("repeat-order")).toBe(true);
+		expect(state.insertedOrders).toHaveLength(2);
+		expect(state.insertedOrders[0]?.id).toBe("repeat-order");
+		expect(state.insertedOrders[1]?.id).toBe("repeat-order");
 	});
 
 	it("propagates persistence failures instead of reporting a successful tick", async () => {

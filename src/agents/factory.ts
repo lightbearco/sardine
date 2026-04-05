@@ -1,12 +1,21 @@
-import Decimal from "decimal.js";
-import { RequestContext } from "@mastra/core/request-context";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { SIM_DEFAULTS, SECTORS, type Sector } from "#/lib/constants";
+import { RequestContext } from "@mastra/core/request-context";
+import Decimal from "decimal.js";
+import {
+	DEV_TICKERS,
+	SECTORS,
+	type Sector,
+	SIM_DEFAULTS,
+} from "#/lib/constants";
 import type {
 	TradingModelTier,
 	TradingRequestContextValues,
 } from "#/mastra/trading-context";
-import type { AgentConfig, AgentState } from "#/types/agent";
+import type {
+	AgentConfig,
+	AgentState,
+	AutopilotDirective,
+} from "#/types/agent";
 import { AgentRegistry } from "./AgentRegistry";
 
 type Category =
@@ -20,8 +29,8 @@ type Category =
 
 type AgentSeedConfig = Omit<AgentConfig, "llmGroup">;
 
-const TIER1_MODEL = "google/gemini-2.5-pro";
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
+const TIER1_MODEL = "google/gemini-3.1-flash-lite-preview";
+const DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview";
 
 const CATEGORY_ORDER: readonly Category[] = [
 	"hedge-fund",
@@ -77,7 +86,11 @@ const TIER3_ARCHETYPES = {
 	"depth-provider": {
 		role: "depth provider",
 		traits: ["systematic", "inventory-aware", "disciplined"],
-		biases: ["microstructure anchoring", "spread fixation", "inventory aversion"],
+		biases: [
+			"microstructure anchoring",
+			"spread fixation",
+			"inventory aversion",
+		],
 		goals: [
 			"keep two-sided liquidity posted in assigned names",
 			"earn spread while flattening inventory quickly",
@@ -261,7 +274,8 @@ function allocateCategoryCounts(total: number): Record<Category, number> {
 			return right.remainder - left.remainder;
 		}
 		return (
-			CATEGORY_ORDER.indexOf(left.category) - CATEGORY_ORDER.indexOf(right.category)
+			CATEGORY_ORDER.indexOf(left.category) -
+			CATEGORY_ORDER.indexOf(right.category)
 		);
 	});
 
@@ -285,7 +299,8 @@ function randomSectors(
 }
 
 function buildNamedAgents(): Record<
-	Exclude<Category, "momentum" | "value" | "noise" | "depth-provider"> | "tier1",
+	| Exclude<Category, "momentum" | "value" | "noise" | "depth-provider">
+	| "tier1",
 	AgentSeedConfig[]
 > {
 	return {
@@ -304,7 +319,12 @@ function buildNamedAgents(): Record<
 					"Late-cycle growth is cooling, crowded AI winners are vulnerable to valuation resets, and resilient cash-flow businesses in healthcare and financials should outperform on a risk-adjusted basis.",
 				quarterlyGoal:
 					"Beat the S&P 500 by rotating early without breaching concentration or execution discipline.",
-				personalityTraits: ["analytical", "patient", "macro-aware", "risk-disciplined"],
+				personalityTraits: [
+					"analytical",
+					"patient",
+					"macro-aware",
+					"risk-disciplined",
+				],
 				behavioralBiases: [
 					"anchoring-to-research",
 					"institutional-herding",
@@ -339,7 +359,12 @@ function buildNamedAgents(): Record<
 					"Direction matters less than flow quality; adverse selection rises fastest when volatility and crowding spike together.",
 				quarterlyGoal:
 					"Capture spread consistently while keeping per-name inventory under control.",
-				personalityTraits: ["systematic", "fast", "inventory-aware", "disciplined"],
+				personalityTraits: [
+					"systematic",
+					"fast",
+					"inventory-aware",
+					"disciplined",
+				],
 				behavioralBiases: [
 					"spread-fixation",
 					"inventory-aversion",
@@ -376,7 +401,12 @@ function buildNamedAgents(): Record<
 					"Sticky inflation and slower nominal growth favor defensive quality over crowded cyclical beta.",
 				quarterlyGoal:
 					"Protect capital through regime shifts while compounding steadily with lower beta.",
-				personalityTraits: ["contrarian", "systematic", "macro-obsessed", "patient"],
+				personalityTraits: [
+					"contrarian",
+					"systematic",
+					"macro-obsessed",
+					"patient",
+				],
 				behavioralBiases: ["macro-overconfidence", "crowding-awareness"],
 				constraints: [
 					"Favor diversified risk over concentrated upside.",
@@ -436,14 +466,23 @@ function buildNamedAgents(): Record<
 					"Earnings and guidance dispersion are creating tradable sentiment gaps, but crowded growth still needs tactical sizing.",
 				quarterlyGoal:
 					"Outperform with catalyst timing while keeping downside tight when narratives break.",
-				personalityTraits: ["competitive", "catalyst-driven", "adaptable", "risk-aware"],
+				personalityTraits: [
+					"competitive",
+					"catalyst-driven",
+					"adaptable",
+					"risk-aware",
+				],
 				behavioralBiases: ["recency-bias", "thesis-conviction"],
 				constraints: [
 					"Respect stop losses on broken catalysts.",
 					"Do not let a single event dictate the quarter.",
 				],
 				restrictedSymbols: [],
-				sectors: ["Technology", "Communication Services", "Consumer Discretionary"],
+				sectors: [
+					"Technology",
+					"Communication Services",
+					"Consumer Discretionary",
+				],
 				risk: 0.68,
 				capital: 1_750_000,
 				model: DEFAULT_MODEL,
@@ -498,7 +537,12 @@ function buildNamedAgents(): Record<
 					"Consistent spread capture compounds when adverse selection is contained faster than competitors can react.",
 				quarterlyGoal:
 					"Deliver steady spread P&L with disciplined inventory turnover.",
-				personalityTraits: ["systematic", "consistent", "latency-focused", "disciplined"],
+				personalityTraits: [
+					"systematic",
+					"consistent",
+					"latency-focused",
+					"disciplined",
+				],
 				behavioralBiases: ["throughput-bias", "inventory-aversion"],
 				constraints: [
 					"Do not warehouse inventory longer than necessary.",
@@ -528,7 +572,12 @@ function buildNamedAgents(): Record<
 					"Derivatives crowding bleeds into cash markets faster than many participants recognize, creating short-lived quoting edges.",
 				quarterlyGoal:
 					"Monetize volatility-aware liquidity provision without letting inventory become a thesis.",
-				personalityTraits: ["options-aware", "tactical", "fast", "inventory-aware"],
+				personalityTraits: [
+					"options-aware",
+					"tactical",
+					"fast",
+					"inventory-aware",
+				],
 				behavioralBiases: ["hedging-flow-anchoring", "inventory-aversion"],
 				constraints: [
 					"Only warehouse inventory briefly.",
@@ -560,7 +609,12 @@ function buildNamedAgents(): Record<
 					"Long-term compounding matters more than squeezing short-term upside out of crowded, unstable names.",
 				quarterlyGoal:
 					"Preserve capital and maintain benchmark-aligned exposure without violating fiduciary constraints.",
-				personalityTraits: ["patient", "defensive", "fiduciary-minded", "deliberate"],
+				personalityTraits: [
+					"patient",
+					"defensive",
+					"fiduciary-minded",
+					"deliberate",
+				],
 				behavioralBiases: ["status-quo-bias", "loss-aversion"],
 				constraints: [
 					"Max 3% single-name position.",
@@ -591,7 +645,12 @@ function buildNamedAgents(): Record<
 					"Patience and balance outperform reactive trading when macro uncertainty is high and liquidity leadership keeps shifting.",
 				quarterlyGoal:
 					"Compound capital with benchmark awareness while avoiding unnecessary turnover.",
-				personalityTraits: ["patient", "benchmark-aware", "resilient", "disciplined"],
+				personalityTraits: [
+					"patient",
+					"benchmark-aware",
+					"resilient",
+					"disciplined",
+				],
 				behavioralBiases: ["status-quo-bias", "quality-preference"],
 				constraints: [
 					"Keep turnover low.",
@@ -612,7 +671,10 @@ function buildNamedAgents(): Record<
 }
 
 function buildTier2Procedural(
-	category: Exclude<Category, "momentum" | "value" | "noise" | "depth-provider">,
+	category: Exclude<
+		Category,
+		"momentum" | "value" | "noise" | "depth-provider"
+	>,
 	index: number,
 	rng: ReturnType<typeof createSeededRandom>,
 ): AgentSeedConfig {
@@ -626,8 +688,16 @@ function buildTier2Procedural(
 		category === "hedge-fund"
 			? rng.pick(["long-short", "event-driven", "quality-compounders"])
 			: category === "market-maker"
-				? rng.pick(["tight-spread-liquidity", "inventory-skew", "volatility-adaptive"])
-				: rng.pick(["income-rebalancing", "defensive-allocator", "benchmark-drift"]);
+				? rng.pick([
+						"tight-spread-liquidity",
+						"inventory-skew",
+						"volatility-adaptive",
+					])
+				: rng.pick([
+						"income-rebalancing",
+						"defensive-allocator",
+						"benchmark-drift",
+					]);
 
 	const persona =
 		category === "hedge-fund"
@@ -667,9 +737,15 @@ function buildTier2Procedural(
 				: "Protect capital and keep benchmark drift intentional rather than accidental.";
 	const constraints =
 		category === "hedge-fund"
-			? ["Avoid oversized single-name conviction.", "Cut broken theses quickly."]
+			? [
+					"Avoid oversized single-name conviction.",
+					"Cut broken theses quickly.",
+				]
 			: category === "market-maker"
-				? ["Do not warehouse inventory longer than necessary.", "Adjust spreads when flow turns toxic."]
+				? [
+						"Do not warehouse inventory longer than necessary.",
+						"Adjust spreads when flow turns toxic.",
+					]
 				: [
 						"Favor diversification over concentrated upside.",
 						"Trade patiently and keep turnover low.",
@@ -679,8 +755,7 @@ function buildTier2Procedural(
 		id: `${category}-${index}`,
 		name,
 		tier: "tier2",
-		entityType:
-			category === "pension" ? "pension-fund" : category,
+		entityType: category === "pension" ? "pension-fund" : category,
 		strategy,
 		persona,
 		currentAgenda,
@@ -719,7 +794,10 @@ function buildTier2Procedural(
 }
 
 function buildTier3Agent(
-	category: Extract<Category, "momentum" | "value" | "noise" | "depth-provider">,
+	category: Extract<
+		Category,
+		"momentum" | "value" | "noise" | "depth-provider"
+	>,
 	index: number,
 	rng: ReturnType<typeof createSeededRandom>,
 ): AgentSeedConfig {
@@ -825,14 +903,20 @@ Your temperament is ${profile.traits.join(", ")}. You regularly show ${profile.b
 	};
 }
 
-function assignGroups(configs: AgentSeedConfig[], groupCount: number): AgentConfig[] {
+function assignGroups(
+	configs: AgentSeedConfig[],
+	groupCount: number,
+): AgentConfig[] {
 	return configs.map((config, index) => ({
 		...config,
 		llmGroup: index % groupCount,
 	}));
 }
 
-export function generateAgentConfigs(seed: number, count: number): AgentConfig[] {
+export function generateAgentConfigs(
+	seed: number,
+	count: number,
+): AgentConfig[] {
 	if (count <= 0) {
 		return [];
 	}
@@ -879,6 +963,49 @@ export function generateAgentConfigs(seed: number, count: number): AgentConfig[]
 	return assignGroups(configs.slice(0, count), SIM_DEFAULTS.groupCount);
 }
 
+/**
+ * Build a default autopilot directive so inactive agents trade from tick 1.
+ * Picks symbols matching the agent's sector mandate and assigns small limit orders.
+ */
+function buildDefaultDirective(config: AgentConfig): AutopilotDirective {
+	const sectorSet = new Set(config.sectors);
+	const matchingSymbols = DEV_TICKERS.filter((t) =>
+		sectorSet.has(t.sector as Sector),
+	).map((t) => t.symbol);
+
+	// Fallback: if no sector match, pick first 2 symbols
+	const symbols =
+		matchingSymbols.length > 0
+			? matchingSymbols
+			: DEV_TICKERS.slice(0, 2).map((t) => t.symbol);
+
+	const side =
+		config.strategy.includes("value") || config.strategy.includes("pension")
+			? ("buy" as const)
+			: config.strategy.includes("momentum")
+				? config.id.charCodeAt(config.id.length - 1) % 2 === 0
+					? ("buy" as const)
+					: ("sell" as const)
+				: config.id.charCodeAt(config.id.length - 1) % 2 === 0
+					? ("buy" as const)
+					: ("sell" as const);
+
+	// Each agent gets 1-2 standing orders on distinct symbols
+	const standingOrders = symbols.slice(0, 2).map((symbol) => ({
+		symbol,
+		side,
+		type: "limit" as const,
+		// Buyers bid slightly below mid, sellers ask slightly above
+		price: side === "buy" ? 149.9 : 150.1,
+		qty: Math.max(1, Math.floor(5 + config.capital / 100000)),
+	}));
+
+	return {
+		standingOrders,
+		holdPositions: [],
+	};
+}
+
 export function spawnAgents(
 	configs: AgentConfig[],
 	groupCount: number,
@@ -916,13 +1043,13 @@ export function spawnAgents(
 		requestContext.set("model-tier", deriveModelTier(config.model));
 		requestContext.set("llm-group", config.llmGroup);
 		requestContext.set("decision-params", { ...config.decisionParams });
-		requestContext.set(
-			"restricted-symbols",
-			[...config.restrictedSymbols],
-		);
+		requestContext.set("restricted-symbols", [...config.restrictedSymbols]);
 
 		if (typeof config.decisionParams.maxPositionPct === "number") {
-			requestContext.set("max-position-pct", config.decisionParams.maxPositionPct);
+			requestContext.set(
+				"max-position-pct",
+				config.decisionParams.maxPositionPct,
+			);
 		}
 
 		const maxInventoryPerName = deriveMaxInventoryPerName(config);
@@ -942,7 +1069,7 @@ export function spawnAgents(
 			positions: new Map(),
 			openOrders: new Map(),
 			researchInbox: new Map(),
-			lastAutopilotDirective: null,
+			lastAutopilotDirective: buildDefaultDirective(config),
 			lastLlmTick: null,
 		};
 

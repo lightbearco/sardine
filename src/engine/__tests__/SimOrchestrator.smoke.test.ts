@@ -47,7 +47,8 @@ function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		strategy: "value",
 		persona:
 			"You are a pragmatic portfolio manager looking for high-conviction dislocations.",
-		currentAgenda: "Exploit obvious short-term mispricings while respecting risk.",
+		currentAgenda:
+			"Exploit obvious short-term mispricings while respecting risk.",
 		investmentThesis:
 			"Large-cap tech should mean revert after outsized intraday sentiment swings.",
 		quarterlyGoal: "Grow capital steadily without oversized drawdowns.",
@@ -58,7 +59,7 @@ function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		sectors: ["Technology"],
 		risk: 0.45,
 		capital: 100_000,
-		model: "google/gemini-2.5-flash",
+		model: "google/gemini-3.1-flash-lite-preview",
 		llmGroup: 1,
 		decisionParams: {},
 		...overrides,
@@ -83,10 +84,7 @@ function makeState(config: AgentConfig): AgentState {
 	};
 }
 
-function makeResearchNote(
-	id: string,
-	publishedAtTick: number,
-): ResearchNote {
+function makeResearchNote(id: string, publishedAtTick: number): ResearchNote {
 	return {
 		id,
 		agentId: "research-agent-1",
@@ -191,7 +189,9 @@ function createDbDouble(initialCommands: FakeCommandRow[] = []) {
 					set: Record<string, unknown>;
 				}) => {
 					if (table === agentsTable) {
-						state.upsertedAgents.push(...rows.map((row) => ({ ...row, ...set })));
+						state.upsertedAgents.push(
+							...rows.map((row) => ({ ...row, ...set })),
+						);
 					} else if (table === worldEventsTable) {
 						state.worldEvents.push(...rows.map((row) => ({ ...row, ...set })));
 					} else if (table === simConfigTable) {
@@ -209,7 +209,9 @@ function createDbDouble(initialCommands: FakeCommandRow[] = []) {
 					return;
 				}
 
-				const command = state.commands.find((entry) => entry.status === "pending");
+				const command = state.commands.find(
+					(entry) => entry.status === "pending",
+				);
 				if (!command) {
 					return;
 				}
@@ -256,13 +258,13 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-1", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-2.5-flash",
+					model: "google/gemini-3.1-flash-lite-preview",
 				},
 			});
 			const inactiveEntry = registerAgent(registry, "inactive-autopilot-1", {
 				config: {
 					llmGroup: 1,
-					model: "google/gemini-2.5-flash",
+					model: "google/gemini-3.1-flash-lite-preview",
 				},
 				state: {
 					positions: new Map([
@@ -300,10 +302,10 @@ describe("SimOrchestrator smoke", () => {
 			publicationBus.publish(releasedNote);
 
 			const eventBus = new EventBus();
-			const signalEvents: Array<Record<string, unknown>> = [];
+			const agentEvents: Array<Record<string, unknown>> = [];
 			const worldEvents: Array<Record<string, unknown>> = [];
-			eventBus.on("agent-signal", (signal) => {
-				signalEvents.push(signal as unknown as Record<string, unknown>);
+			eventBus.on("agent-event", (event) => {
+				agentEvents.push(event as unknown as Record<string, unknown>);
 			});
 			eventBus.on("world-event", (event) => {
 				worldEvents.push(event as unknown as Record<string, unknown>);
@@ -321,7 +323,8 @@ describe("SimOrchestrator smoke", () => {
 						affectedSymbols: ["AAPL"],
 						source: "chatbot",
 						payload: {
-							description: "Higher-for-longer rhetoric pressures valuation multiples.",
+							description:
+								"Higher-for-longer rhetoric pressures valuation multiples.",
 						},
 					},
 					status: "pending",
@@ -369,14 +372,15 @@ describe("SimOrchestrator smoke", () => {
 			);
 
 			const summary = await orchestrator.step();
-			const lastDirective = registry.get(activeEntry.config.id)?.state.lastAutopilotDirective;
+			const lastDirective = registry.get(activeEntry.config.id)?.state
+				.lastAutopilotDirective;
 
 			console.log("\n[live-orchestrator] Tick summary:");
 			console.log(JSON.stringify(summary, null, 2));
 			console.log("\n[live-orchestrator] Last autopilot directive:");
 			console.log(JSON.stringify(lastDirective, null, 2));
 			console.log("\n[live-orchestrator] Signal events:");
-			console.log(JSON.stringify(signalEvents, null, 2));
+			console.log(JSON.stringify(agentEvents, null, 2));
 
 			expect(summary.activeAgents).toBe(1);
 			expect(summary.simTick).toBe(1);
@@ -384,19 +388,25 @@ describe("SimOrchestrator smoke", () => {
 			expect(registry.get(activeEntry.config.id)?.state.lastLlmTick).toBe(1);
 			expect(lastDirective).not.toBeNull();
 			expect(lastDirective?.holdPositions).toBeDefined();
-			expect(registry.get(activeEntry.config.id)?.state.researchInbox.has("macro-note-1")).toBe(
-				true,
-			);
 			expect(
-				registry.get(inactiveEntry.config.id)?.state.researchInbox.has("macro-note-1"),
+				registry
+					.get(activeEntry.config.id)
+					?.state.researchInbox.has("macro-note-1"),
+			).toBe(true);
+			expect(
+				registry
+					.get(inactiveEntry.config.id)
+					?.state.researchInbox.has("macro-note-1"),
 			).toBe(true);
 			expect(dbState.simConfig).not.toBeNull();
 			expect(dbState.upsertedAgents.length).toBeGreaterThan(0);
-			expect(dbState.commands.some((command) => command.status === "rejected")).toBe(
-				true,
-			);
+			expect(
+				dbState.commands.some((command) => command.status === "rejected"),
+			).toBe(true);
 			expect(worldEvents).toHaveLength(1);
-			expect(worldEvents[0]?.eventId ?? worldEvents[0]?.id).toBe("live-fed-event");
+			expect(worldEvents[0]?.eventId ?? worldEvents[0]?.id).toBe(
+				"live-fed-event",
+			);
 
 			if (summary.orderCount > 0) {
 				expect(dbState.insertedOrders.length).toBe(summary.orderCount);
@@ -416,7 +426,7 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-repeat", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-2.5-flash",
+					model: "google/gemini-3.1-flash-lite-preview",
 				},
 			});
 			registerAgent(registry, "market-maker-seed");
@@ -480,7 +490,10 @@ describe("SimOrchestrator smoke", () => {
 			expect(secondSummary.activeAgents).toBe(1);
 			expect(inboxSizeAfterFirstTick).toBeGreaterThan(0);
 			expect(inboxSizeAfterSecondTick).toBe(inboxSizeAfterFirstTick);
-			expect(processedCommandsAfterFirstTick).toEqual(["processed", "processed"]);
+			expect(processedCommandsAfterFirstTick).toEqual([
+				"processed",
+				"processed",
+			]);
 			expect(dbState.commands.map((command) => command.status)).toEqual([
 				"processed",
 				"processed",
@@ -498,7 +511,7 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-timeout", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-2.5-flash",
+					model: "google/gemini-3.1-flash-lite-preview",
 				},
 				state: {
 					positions: new Map([

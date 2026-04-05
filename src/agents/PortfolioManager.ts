@@ -13,46 +13,44 @@ export class PortfolioManager {
 
 		for (const trade of trades) {
 			const buyerEntry = registry.get(trade.buyerAgentId);
-			if (!buyerEntry) {
-				throw new Error(`Unknown buyer agent ID: ${trade.buyerAgentId}`);
-			}
-
 			const sellerEntry = registry.get(trade.sellerAgentId);
-			if (!sellerEntry) {
-				throw new Error(`Unknown seller agent ID: ${trade.sellerAgentId}`);
-			}
 
-			touchedAgentIds.add(trade.buyerAgentId);
-			touchedAgentIds.add(trade.sellerAgentId);
+			// Skip trades involving unregistered agents (e.g. seed liquidity "market-maker-seed")
+			if (!buyerEntry && !sellerEntry) continue;
 
 			if (trade.buyerAgentId === trade.sellerAgentId) {
+				if (buyerEntry) touchedAgentIds.add(trade.buyerAgentId);
 				continue;
 			}
 
 			const notional = trade.price.times(trade.qty);
 
-			buyerEntry.state.cash = buyerEntry.state.cash.minus(notional);
-			this.applyPositionDelta(
-				buyerEntry.state.positions,
-				trade.symbol,
-				trade.qty,
-				trade.price,
-			);
+			if (buyerEntry) {
+				touchedAgentIds.add(trade.buyerAgentId);
+				buyerEntry.state.cash = buyerEntry.state.cash.minus(notional);
+				this.applyPositionDelta(
+					buyerEntry.state.positions,
+					trade.symbol,
+					trade.qty,
+					trade.price,
+				);
+			}
 
-			sellerEntry.state.cash = sellerEntry.state.cash.plus(notional);
-			this.applyPositionDelta(
-				sellerEntry.state.positions,
-				trade.symbol,
-				-trade.qty,
-				trade.price,
-			);
+			if (sellerEntry) {
+				touchedAgentIds.add(trade.sellerAgentId);
+				sellerEntry.state.cash = sellerEntry.state.cash.plus(notional);
+				this.applyPositionDelta(
+					sellerEntry.state.positions,
+					trade.symbol,
+					-trade.qty,
+					trade.price,
+				);
+			}
 		}
 
 		for (const agentId of touchedAgentIds) {
 			const entry = registry.get(agentId);
-			if (!entry) {
-				throw new Error(`Unknown agent ID during NAV recompute: ${agentId}`);
-			}
+			if (!entry) continue;
 
 			entry.state.nav = this.computeNav(
 				entry.state.cash,

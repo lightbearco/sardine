@@ -1,24 +1,18 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { AgentEvent } from "#/types/sim";
 import { useSimWebSocket } from "./useSimWebSocket";
-import type { AgentSignal } from "#/types/sim";
 
-export function useAgentFeed(maxDecisions: number = 50) {
-  const { subscribe, isConnected } = useSimWebSocket();
-  const [decisions, setDecisions] = useState<AgentSignal[]>([]);
+export function useAgentFeed(maxEvents: number = 50) {
+	const { subscribe, isConnected } = useSimWebSocket();
+	const [events, setEvents] = useState<AgentEvent[]>([]);
 
-  useEffect(() => {
-    const unsubscribe = subscribe("agents", (decision: AgentSignal) => {
-      setDecisions((prev) => {
-        const next = [decision, ...prev];
-        if (next.length > maxDecisions) {
-          return next.slice(0, maxDecisions);
-        }
-        return next;
-      });
-    });
+	useEffect(() => {
+		const unsubscribe = subscribe("agents", (event: AgentEvent) => {
+			setEvents((previous) => [event, ...previous].slice(0, maxEvents));
+		});
 
-    return unsubscribe;
-  }, [subscribe, maxDecisions]);
+		return unsubscribe;
+	}, [maxEvents, subscribe]);
 
-  return { decisions, isConnected };
+	return { events, isConnected };
 }
