@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License: Apache 2.0" />
   <img src="https://img.shields.io/badge/node-%3E%3D22.13-339933" alt="Node >=22.13" />
   <img src="https://img.shields.io/badge/runtime-bun-F9A825" alt="Bun" />
   <img src="https://img.shields.io/badge/agents-1000%2B-6F42C1" alt="1000+ Agents" />
@@ -392,4 +392,4 @@ Bot: Returns Goldman's recent LLM reasoning + trade outcomes from the orders tab
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
