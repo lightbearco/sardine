@@ -32,6 +32,11 @@ export function TopBar() {
 	const { simState, play, pause, step, isConnected, setSpeed } = useSimControls();
 	const ticker = DEV_TICKERS.find((item) => item.symbol === symbol);
 	const latencyMs = simState?.lastSummary?.durationMs;
+	const statusClassName = !isConnected
+		? "border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
+		: simState?.isRunning
+			? "border-transparent bg-primary/15 text-primary-foreground"
+			: "border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text)]";
 
 	return (
 		<header className="flex h-12 items-center gap-4 rounded-xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)] px-4 text-[var(--terminal-text)] shadow-sm">
@@ -48,10 +53,7 @@ export function TopBar() {
 			/>
 
 			<div className="flex min-w-0 flex-1 items-center gap-3 text-xs text-[var(--terminal-text-muted)]">
-				<Badge
-					variant={simState?.isRunning ? "default" : "secondary"}
-					className={simState?.isRunning ? "" : "bg-secondary text-secondary-foreground"}
-				>
+				<Badge className={statusClassName}>
 					{isConnected
 						? simState?.isRunning
 							? "Running"

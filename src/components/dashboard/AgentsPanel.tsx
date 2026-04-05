@@ -16,7 +16,7 @@ function AgentStatusBadge({
 }) {
 	if (isRunning) {
 		return (
-			<Badge className="border-transparent bg-primary/15 text-primary">
+			<Badge className="border-transparent bg-primary/15 text-primary-foreground">
 				Running
 			</Badge>
 		);
@@ -30,7 +30,11 @@ function AgentStatusBadge({
 		);
 	}
 
-	return <Badge variant="secondary">Idle</Badge>;
+	return (
+		<Badge className="border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text)]">
+			Idle
+		</Badge>
+	);
 }
 
 export function AgentsPanel() {
@@ -54,7 +58,7 @@ export function AgentsPanel() {
 						Roster and live reasoning
 					</div>
 				</div>
-				<Badge variant={isConnected ? "secondary" : "outline"}>
+				<Badge className="border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text)]">
 					{isConnected ? "Connected" : "Reconnecting"}
 				</Badge>
 			</div>
@@ -174,7 +178,7 @@ export function AgentsPanel() {
 												Latest Failure
 											</div>
 											{selectedLiveState.latestFailure ? (
-												<div className="mt-3 space-y-2">
+													<div className="mt-3 space-y-2">
 													<Badge className="border-transparent bg-destructive/15 text-destructive">
 														{selectedLiveState.latestFailure.reason}
 													</Badge>
