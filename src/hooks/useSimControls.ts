@@ -5,6 +5,7 @@ import Decimal from "decimal.js";
 import { db } from "#/db/index";
 import { commands } from "#/db/schema";
 import type { Trade, TradeData } from "#/types/market";
+import { buildSessionChannel } from "#/types/ws";
 import type {
 	SimRuntimeState,
 	SimRuntimeStateData,
@@ -75,9 +76,12 @@ export function useSimControls() {
 			return;
 		}
 
-		const unsubscribe = subscribe(`sim:${sessionId}`, (state: SimRuntimeState) => {
+		const unsubscribe = subscribe(
+			buildSessionChannel("sim", sessionId),
+			(state: SimRuntimeState) => {
 			setSimState(state);
-		});
+			},
+		);
 
 		return unsubscribe;
 	}, [isLive, sessionId, subscribe]);

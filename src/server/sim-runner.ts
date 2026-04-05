@@ -33,11 +33,18 @@ import { tradingAgent } from "#/mastra/agents/trading-agent";
 import type { AutopilotDirective } from "#/types/agent";
 import type { ResearchFocus } from "#/types/research";
 import type { TickSummary } from "#/types/sim";
+import type { WatchlistSummaryPayload } from "#/types/watchlist";
 import {
+	hardDeleteSimulationSession,
+	listDeletingSimulationSessions,
 	listRunnableSimulationSessions,
 	markSimulationSessionActive,
 	markSimulationSessionFailed,
+	serializeLobSnapshot,
+	serializeOhlcvBar,
+	serializeTrade,
 } from "#/server/sessions";
+import { buildSessionChannel, buildSymbolChannel } from "#/types/ws";
 import { broadcaster } from "./ws/broadcaster";
 import { startSimWebSocketServer } from "./ws/SimWebSocketServer";
 
@@ -59,6 +66,7 @@ type SimulationRuntime = {
 	researchWorkers: ResearchAgentWorker[];
 	orchestrator: SimOrchestrator;
 	nextTickAtMs: number;
+	disposePromise: Promise<void> | null;
 };
 
 type RunnableSimulationSession =
@@ -99,6 +107,10 @@ function resetBroadcastCounters(sessionId: string) {
 	broadcastCounters.set(sessionId, createBroadcastCounters());
 }
 
+function clearBroadcastCounters(sessionId: string) {
+	broadcastCounters.delete(sessionId);
+}
+
 function trackBroadcast(sessionId: string, channel: BroadcastChannel) {
 	const counters = ensureBroadcastCounters(sessionId);
 	counters[channel] += 1;
@@ -124,32 +136,99 @@ function logBroadcastCounters(sessionId: string) {
 
 function wireRuntimeBroadcasts(sessionId: string, eventBus: EventBus): void {
 	resetBroadcastCounters(sessionId);
+	const watchlistSummaries = new Map<string, WatchlistSummaryPayload>();
+
+	const emitWatchlistUpdate = (
+		symbol: string,
+		patch: Partial<WatchlistSummaryPayload>,
+	) => {
+		const now = Date.now();
+		const current = watchlistSummaries.get(symbol) ?? {
+			symbol,
+			lastPrice: null,
+			high: null,
+			low: null,
+			spread: null,
+			updatedAt: now,
+		};
+		const merged: WatchlistSummaryPayload = {
+			...current,
+			...patch,
+			lastBar: patch.lastBar ?? current.lastBar,
+			snapshot: patch.snapshot ?? current.snapshot,
+			lastTrade: patch.lastTrade ?? current.lastTrade,
+			high:
+				patch.high ?? patch.lastBar?.high ?? current.high,
+			low:
+				patch.low ?? patch.lastBar?.low ?? current.low,
+			lastPrice:
+				patch.lastPrice ??
+				patch.lastTrade?.price ??
+				patch.lastBar?.close ??
+				current.lastPrice,
+			spread:
+				patch.spread ??
+				patch.snapshot?.spread ??
+				current.spread,
+			updatedAt: now,
+		};
+		watchlistSummaries.set(symbol, merged);
+		broadcaster.broadcast(buildSessionChannel("watchlist", sessionId), merged);
+	};
+
 	eventBus.on("ohlcv", (bar) => {
-		broadcaster.broadcast(`ohlcv:${sessionId}:${bar.symbol}`, bar);
+		const serializedBar = serializeOhlcvBar(bar);
+		broadcaster.broadcast(
+			buildSymbolChannel("ohlcv", sessionId, bar.symbol),
+			serializedBar,
+		);
 		trackBroadcast(sessionId, "ohlcv");
+		emitWatchlistUpdate(bar.symbol, {
+			lastBar: serializedBar,
+			lastPrice: serializedBar.close,
+			high: serializedBar.high,
+			low: serializedBar.low,
+		});
 	});
 
 	eventBus.on("lob-update", (snapshot) => {
-		broadcaster.broadcast(`lob:${sessionId}:${snapshot.symbol}`, snapshot);
+		const serializedSnapshot = serializeLobSnapshot(snapshot);
+		broadcaster.broadcast(
+			buildSymbolChannel("lob", sessionId, snapshot.symbol),
+			serializedSnapshot,
+		);
 		trackBroadcast(sessionId, "lob");
+		emitWatchlistUpdate(snapshot.symbol, {
+			snapshot: serializedSnapshot,
+			spread: serializedSnapshot.spread,
+			lastPrice: serializedSnapshot.lastPrice ?? null,
+		});
 	});
 
 	eventBus.on("trade", (trade) => {
-		broadcaster.broadcast(`trades:${sessionId}:${trade.symbol}`, [trade]);
+		const serializedTrade = serializeTrade(trade);
+		broadcaster.broadcast(
+			buildSymbolChannel("trades", sessionId, trade.symbol),
+			[serializedTrade],
+		);
 		trackBroadcast(sessionId, "trades");
+		emitWatchlistUpdate(trade.symbol, {
+			lastTrade: serializedTrade,
+			lastPrice: serializedTrade.price,
+		});
 	});
 
 	eventBus.on("agent-event", (event) => {
-		broadcaster.broadcast(`agents:${sessionId}`, event);
+		broadcaster.broadcast(buildSessionChannel("agents", sessionId), event);
 		trackBroadcast(sessionId, "agents");
 	});
 
 	eventBus.on("research-published", (note) => {
-		broadcaster.broadcast(`research:${sessionId}`, note);
+		broadcaster.broadcast(buildSessionChannel("research", sessionId), note);
 	});
 
 	eventBus.on("sim-state", (state) => {
-		broadcaster.broadcast(`sim:${sessionId}`, state);
+		broadcaster.broadcast(buildSessionChannel("sim", sessionId), state);
 	});
 }
 
@@ -238,6 +317,35 @@ function logTickSummary(sessionId: string, summary: TickSummary): void {
 		`[SimRunner] ${sessionId} tick=${summary.simTick} durationMs=${summary.durationMs} trades=${summary.tradeCount} orders=${summary.orderCount} running=${summary.isRunning}`,
 	);
 	logBroadcastCounters(sessionId);
+}
+
+async function waitForRuntimeToSettle(runtime: SimulationRuntime): Promise<void> {
+	while (runtime.orchestrator.getState().isTicking) {
+		await sleep(25);
+	}
+}
+
+export async function disposeRuntime(runtime: SimulationRuntime): Promise<void> {
+	if (runtime.disposePromise) {
+		await runtime.disposePromise;
+		return;
+	}
+
+	runtime.disposePromise = (async () => {
+		await waitForRuntimeToSettle(runtime);
+		await runtime.orchestrator.stop();
+		await waitForRuntimeToSettle(runtime);
+		runtime.eventBus.removeAllListeners();
+		runtime.publicationBus.clear();
+		clearBroadcastCounters(runtime.sessionId);
+		broadcaster.clearSession(runtime.sessionId);
+	})();
+
+	try {
+		await runtime.disposePromise;
+	} finally {
+		runtime.disposePromise = null;
+	}
 }
 
 async function loadPersistedSessionState(sessionId: string): Promise<{
@@ -337,7 +445,10 @@ async function bootstrapSimulationRuntime(
 	wireRuntimeBroadcasts(sessionId, eventBus);
 	await markSimulationSessionActive(sessionId);
 	await orchestrator.start();
-	broadcaster.broadcast(`sim:${sessionId}`, orchestrator.getRuntimeState());
+	broadcaster.broadcast(
+		buildSessionChannel("sim", sessionId),
+		orchestrator.getRuntimeState(),
+	);
 
 	logRuntimeEvent(
 		sessionId,
@@ -353,6 +464,7 @@ async function bootstrapSimulationRuntime(
 		researchWorkers: bootstrap.researchWorkers,
 		orchestrator,
 		nextTickAtMs: Date.now(),
+		disposePromise: null,
 	};
 }
 
@@ -451,7 +563,10 @@ async function resumeSimulationRuntime(
 	});
 
 	wireRuntimeBroadcasts(sessionId, eventBus);
-	broadcaster.broadcast(`sim:${sessionId}`, orchestrator.getRuntimeState());
+	broadcaster.broadcast(
+		buildSessionChannel("sim", sessionId),
+		orchestrator.getRuntimeState(),
+	);
 	logRuntimeEvent(
 		sessionId,
 		`resumed tick=${restored.runtimeState.currentTick} running=${restored.runtimeState.isRunning} openOrders=${persistedState.openOrders.length}`,
@@ -466,6 +581,7 @@ async function resumeSimulationRuntime(
 		researchWorkers: restored.researchWorkers,
 		orchestrator,
 		nextTickAtMs: Date.now(),
+		disposePromise: null,
 	};
 }
 
@@ -566,6 +682,7 @@ export function buildDivergenceRows(input: {
 
 		return [
 			{
+				sessionId: input.sessionId,
 				tick: input.tick,
 				symbol,
 				simPrice: simPriceNumber,
@@ -640,6 +757,7 @@ export async function runResearchCycle(
 			const result = await agent.generate(
 				buildResearchPrompt(worker, simTick),
 				{
+					resourceId: sessionId,
 					requestContext,
 					maxSteps: 6,
 					structuredOutput: {
@@ -668,6 +786,10 @@ async function processRuntimeCycle(
 	runtime: SimulationRuntime,
 	envIntervalOverride: number | null,
 ): Promise<void> {
+	if (runtime.disposePromise) {
+		return;
+	}
+
 	const { orchestrator, researchWorkers, publicationBus, eventBus, sessionId } =
 		runtime;
 	const state = orchestrator.getState();
@@ -679,7 +801,10 @@ async function processRuntimeCycle(
 		}
 
 		if (controlOutcome.processed) {
-			broadcaster.broadcast(`sim:${sessionId}`, orchestrator.getRuntimeState());
+			broadcaster.broadcast(
+				buildSessionChannel("sim", sessionId),
+				orchestrator.getRuntimeState(),
+			);
 			if (orchestrator.getState().isRunning) {
 				runtime.nextTickAtMs = Date.now();
 				return;
@@ -693,7 +818,10 @@ async function processRuntimeCycle(
 					for (const message of orchestrator.consumeRuntimeLogMessages()) {
 						logRuntimeEvent(sessionId, message);
 					}
-					broadcaster.broadcast(`sim:${sessionId}`, orchestrator.getRuntimeState());
+					broadcaster.broadcast(
+						buildSessionChannel("sim", sessionId),
+						orchestrator.getRuntimeState(),
+					);
 					await persistDivergenceLog(runtime);
 					await runResearchCycle(
 						researchWorkers,
@@ -724,7 +852,10 @@ async function processRuntimeCycle(
 		for (const message of orchestrator.consumeRuntimeLogMessages()) {
 			logRuntimeEvent(sessionId, message);
 		}
-		broadcaster.broadcast(`sim:${sessionId}`, orchestrator.getRuntimeState());
+		broadcaster.broadcast(
+			buildSessionChannel("sim", sessionId),
+			orchestrator.getRuntimeState(),
+		);
 		await persistDivergenceLog(runtime);
 		await runResearchCycle(
 			researchWorkers,
@@ -757,13 +888,44 @@ async function main() {
 	console.log(`[SimRunner] worker started maxLiveSessions=${maxLiveSessions}`);
 
 	while (true) {
-		const runnableSessions = await listRunnableSimulationSessions();
+		const [runnableSessions, deletingSessions] = await Promise.all([
+			listRunnableSimulationSessions(),
+			listDeletingSimulationSessions(),
+		]);
 		const runnableIds = new Set(runnableSessions.map((session) => session.id));
+		const deletingIds = new Set(deletingSessions.map((session) => session.id));
 
 		for (const runtimeId of Array.from(runtimes.keys())) {
+			if (deletingIds.has(runtimeId)) {
+				continue;
+			}
+
 			if (!runnableIds.has(runtimeId)) {
+				const runtime = runtimes.get(runtimeId);
+				if (!runtime) {
+					continue;
+				}
+
+				await disposeRuntime(runtime);
 				runtimes.delete(runtimeId);
 				logRuntimeEvent(runtimeId, "unloaded");
+			}
+		}
+
+		for (const session of deletingSessions) {
+			const runtime = runtimes.get(session.id);
+
+			if (runtime) {
+				await disposeRuntime(runtime);
+				runtimes.delete(session.id);
+				logRuntimeEvent(session.id, "disposed for deletion");
+			}
+
+			try {
+				await hardDeleteSimulationSession(session.id);
+				logRuntimeEvent(session.id, "deleted");
+			} catch (error) {
+				console.error(`Failed to delete session ${session.id}:`, error);
 			}
 		}
 

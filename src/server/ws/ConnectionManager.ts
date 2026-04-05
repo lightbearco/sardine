@@ -18,16 +18,41 @@ export class ConnectionManager {
 
   unsubscribe(ws: WebSocket, channel: string) {
     this.channels.get(channel)?.delete(ws);
-    this.sockets.get(ws)?.delete(channel);
+    const socketChannels = this.sockets.get(ws);
+    socketChannels?.delete(channel);
     
     // Cleanup if empty
     if (this.channels.get(channel)?.size === 0) {
       this.channels.delete(channel);
     }
+
+    if (socketChannels?.size === 0) {
+      this.sockets.delete(ws);
+    }
   }
 
   getSubscribers(channel: string): Set<WebSocket> {
     return this.channels.get(channel) ?? new Set();
+  }
+
+  removeChannels(matcher: (channel: string) => boolean) {
+    for (const [channel, subscribers] of Array.from(this.channels.entries())) {
+      if (!matcher(channel)) {
+        continue;
+      }
+
+      for (const ws of subscribers) {
+        this.sockets.get(ws)?.delete(channel);
+      }
+
+      this.channels.delete(channel);
+    }
+
+    for (const [ws, channels] of Array.from(this.sockets.entries())) {
+      if (channels.size === 0) {
+        this.sockets.delete(ws);
+      }
+    }
   }
 
   removeConnection(ws: WebSocket) {

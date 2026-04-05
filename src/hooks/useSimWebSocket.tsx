@@ -1,6 +1,15 @@
-import { createContext, useContext, useEffect, useState, useRef, useMemo } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import type { ReactNode } from "react";
 import EventEmitter from "eventemitter3";
+import { WsMessageType, type WsChannel, type WsClientMessage } from "#/types/ws";
 
 export interface WsMessageData {
   channel: string;
@@ -8,17 +17,40 @@ export interface WsMessageData {
 }
 
 interface SimWebSocketContextValue {
-  subscribe: <T>(channel: string, callback: (data: T) => void) => () => void;
+  subscribe: <T>(channel: WsChannel, callback: (data: T) => void) => () => void;
   isConnected: boolean;
 }
 
 const SimWebSocketContext = createContext<SimWebSocketContextValue | null>(null);
 
+export function buildSubscribeMessage(channel: WsChannel): WsClientMessage {
+  return {
+    type: WsMessageType.Subscribe,
+    channel,
+  };
+}
+
+export function buildUnsubscribeMessage(channel: WsChannel): WsClientMessage {
+  return {
+    type: WsMessageType.Unsubscribe,
+    channel,
+  };
+}
+
+export function resubscribeActiveChannels(
+  channels: Iterable<WsChannel>,
+  send: (serializedMessage: string) => void,
+) {
+  for (const channel of channels) {
+    send(JSON.stringify(buildSubscribeMessage(channel)));
+  }
+}
+
 export function SimWebSocketProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const eventEmitter = useRef(new EventEmitter());
-  const activeChannels = useRef(new Set<string>());
+  const activeChannels = useRef(new Set<WsChannel>());
 
   useEffect(() => {
     let reconnectTimer: ReturnType<typeof setTimeout>;
@@ -31,9 +63,9 @@ export function SimWebSocketProvider({ children }: { children: ReactNode }) {
       ws.onopen = () => {
         setIsConnected(true);
         // Resubscribe to active channels upon connection
-        for (const channel of activeChannels.current) {
-          ws.send(JSON.stringify({ type: "subscribe", channel }));
-        }
+        resubscribeActiveChannels(activeChannels.current, (message) => {
+          ws.send(message);
+        });
       };
 
       ws.onmessage = (event) => {
@@ -67,32 +99,38 @@ export function SimWebSocketProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value = useMemo<SimWebSocketContextValue>(() => ({
-    isConnected,
-    subscribe: (channel: string, callback: (data: any) => void) => {
+  const subscribe = useCallback<SimWebSocketContextValue["subscribe"]>(
+    (channel, callback) => {
       eventEmitter.current.on(channel, callback);
 
-      // Tell the server to subscribe if not already tracking this channel
       if (!activeChannels.current.has(channel)) {
         activeChannels.current.add(channel);
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: "subscribe", channel }));
+          wsRef.current.send(JSON.stringify(buildSubscribeMessage(channel)));
         }
       }
 
       return () => {
         eventEmitter.current.off(channel, callback);
-        
-        // If no more listeners for this channel, unsubscribe from server
+
         if (eventEmitter.current.listenerCount(channel) === 0) {
           activeChannels.current.delete(channel);
           if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: "unsubscribe", channel }));
+            wsRef.current.send(JSON.stringify(buildUnsubscribeMessage(channel)));
           }
         }
       };
-    }
-  }), [isConnected]);
+    },
+    [],
+  );
+
+  const value = useMemo<SimWebSocketContextValue>(
+    () => ({
+      isConnected,
+      subscribe,
+    }),
+    [isConnected, subscribe],
+  );
 
   return (
     <SimWebSocketContext.Provider value={value}>

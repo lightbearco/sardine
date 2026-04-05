@@ -57,7 +57,7 @@ export const commandStatusEnum = pgEnum("command_status", [
 
 export const simulationSessionStatusEnum = pgEnum(
   "simulation_session_status",
-  ["pending", "active", "completed", "failed"]
+  ["pending", "active", "completed", "failed", "deleting"]
 );
 
 // ── Tables ──
@@ -102,7 +102,7 @@ export const simConfig = pgTable("sim_config", {
   id: integer("id").primaryKey().generatedByDefaultAsIdentity(),
   sessionId: varchar("session_id", { length: 128 })
     .notNull()
-    .references(() => simulationSessions.id)
+    .references(() => simulationSessions.id, { onDelete: "cascade" })
     .unique(),
   isRunning: boolean("is_running").notNull().default(false),
   currentTick: integer("current_tick").notNull().default(0),
@@ -121,7 +121,7 @@ export const agents = pgTable(
     id: varchar("id", { length: 128 }).primaryKey(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     tier: agentTierEnum("tier").notNull(),
     status: agentStatusEnum("status").notNull().default("active"),
@@ -176,11 +176,11 @@ export const orders = pgTable(
     id: varchar("id", { length: 128 }).primaryKey(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     tick: integer("tick").notNull(),
     agentId: varchar("agent_id", { length: 128 })
       .notNull()
-      .references(() => agents.id),
+      .references(() => agents.id, { onDelete: "cascade" }),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     type: orderTypeEnum("type").notNull(),
     side: orderSideEnum("side").notNull(),
@@ -206,21 +206,21 @@ export const trades = pgTable(
     id: varchar("id", { length: 128 }).primaryKey(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     tick: integer("tick").notNull(),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     buyOrderId: varchar("buy_order_id", { length: 128 })
       .notNull()
-      .references(() => orders.id),
+      .references(() => orders.id, { onDelete: "cascade" }),
     sellOrderId: varchar("sell_order_id", { length: 128 })
       .notNull()
-      .references(() => orders.id),
+      .references(() => orders.id, { onDelete: "cascade" }),
     buyerAgentId: varchar("buyer_agent_id", { length: 128 })
       .notNull()
-      .references(() => agents.id),
+      .references(() => agents.id, { onDelete: "cascade" }),
     sellerAgentId: varchar("seller_agent_id", { length: 128 })
       .notNull()
-      .references(() => agents.id),
+      .references(() => agents.id, { onDelete: "cascade" }),
     price: real("price").notNull(),
     quantity: integer("quantity").notNull(),
     createdAt: timestamp("created_at").defaultNow(),
@@ -240,7 +240,7 @@ export const ticks = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     tick: integer("tick").notNull(),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     open: real("open").notNull(),
@@ -264,12 +264,12 @@ export const researchNotes = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     noteId: varchar("note_id", { length: 128 }).notNull().unique(),
     publishedAtTick: integer("published_at_tick").notNull(),
     agentId: varchar("agent_id", { length: 128 })
       .notNull()
-      .references(() => agents.id),
+      .references(() => agents.id, { onDelete: "cascade" }),
     focus: text("focus").notNull(),
     headline: text("headline").notNull(),
     body: text("body").notNull(),
@@ -293,7 +293,7 @@ export const worldEvents = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     eventId: varchar("event_id", { length: 128 }).notNull().unique(),
     type: text("type").notNull().default("custom"),
     source: text("source").notNull(), // "chatbot" | "synthetic" | "news"
@@ -315,44 +315,13 @@ export const worldEvents = pgTable(
   ]
 );
 
-export const messages = pgTable(
-  "messages",
-  {
-    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-    tick: integer("tick").notNull(),
-    fromAgentId: varchar("from_agent_id", { length: 128 }).references(
-      () => agents.id
-    ),
-    toAgentId: varchar("to_agent_id", { length: 128 }).references(
-      () => agents.id
-    ),
-    channel: text("channel"),
-    content: text("content").notNull(),
-    metadata: jsonb("metadata"),
-    createdAt: timestamp("created_at").defaultNow(),
-  },
-  (table) => [
-    index("messages_tick_idx").on(table.tick),
-    index("messages_from_agent_idx").on(table.fromAgentId),
-    index("messages_to_agent_idx").on(table.toAgentId),
-  ]
-);
-
-export const simSnapshots = pgTable(
-  "sim_snapshots",
-  {
-    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-    tick: integer("tick").notNull(),
-    snapshot: jsonb("snapshot").notNull(), // full sim state
-    createdAt: timestamp("created_at").defaultNow(),
-  },
-  (table) => [index("sim_snapshots_tick_idx").on(table.tick)]
-);
-
 export const divergenceLog = pgTable(
   "divergence_log",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     tick: integer("tick").notNull(),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     simPrice: real("sim_price").notNull(),
@@ -361,6 +330,7 @@ export const divergenceLog = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("divergence_log_session_id_idx").on(table.sessionId),
     index("divergence_log_tick_idx").on(table.tick),
     index("divergence_log_symbol_idx").on(table.symbol),
   ]
@@ -372,7 +342,7 @@ export const commands = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     payload: jsonb("payload"),
     status: commandStatusEnum("status").notNull().default("pending"),
@@ -392,10 +362,10 @@ export const agentEvents = pgTable(
     eventId: varchar("event_id", { length: 128 }).primaryKey(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     agentId: varchar("agent_id", { length: 128 })
       .notNull()
-      .references(() => agents.id),
+      .references(() => agents.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     tick: integer("tick").notNull(),
     payload: jsonb("payload").$type<AgentEvent>().notNull(),
@@ -420,7 +390,7 @@ export const orderBookSnapshots = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     sessionId: varchar("session_id", { length: 128 })
       .notNull()
-      .references(() => simulationSessions.id),
+      .references(() => simulationSessions.id, { onDelete: "cascade" }),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     tick: integer("tick").notNull().default(0),
     bids: jsonb("bids")

@@ -11,10 +11,16 @@ import { TimeAndSales } from "#/components/dashboard/TimeAndSales";
 import { TopBar } from "#/components/dashboard/TopBar";
 import { Watchlist } from "#/components/dashboard/Watchlist";
 import { SessionDashboardProvider } from "#/hooks/useSessionDashboard";
-import { getSessionDashboardFn } from "#/hooks/useSimulationSessions";
-import type { SessionDashboardHydration } from "#/types/sim";
 import {
-	isSupportedSessionSymbol,
+	getSessionDashboardFn,
+	getSessionSymbolFn,
+} from "#/hooks/useSimulationSessions";
+import type {
+	SessionDashboardHydration,
+	SessionSymbolHydration,
+} from "#/types/sim";
+import {
+	normalizeSessionSymbol,
 	shouldReplaceSessionSymbolInUrl,
 } from "#/lib/session-symbols";
 
@@ -22,36 +28,57 @@ const dashboardSearchSchema = z.object({
 	symbol: z.string().optional(),
 });
 
+export const dashboardLoaderDeps = () => ({});
+
 export const Route = createFileRoute("/dashboard/$sessionId")({
 	validateSearch: (search) => dashboardSearchSchema.parse(search),
+	loaderDeps: dashboardLoaderDeps,
 	loader: async ({ params, location }) => {
+		const dashboard = await getSessionDashboardFn({
+			data: { sessionId: params.sessionId },
+		});
+
+		if (!dashboard) {
+			return { dashboard: null, symbolData: null };
+		}
+
 		const searchParams = new URLSearchParams(location.search);
-		return getSessionDashboardFn({
+		const symbol = normalizeSessionSymbol(
+			searchParams.get("symbol") ?? undefined,
+			dashboard.session.symbols,
+		);
+		const symbolData = await getSessionSymbolFn({
 			data: {
 				sessionId: params.sessionId,
-				symbol: searchParams.get("symbol") ?? undefined,
+				symbol,
 			},
 		});
+
+		return { dashboard, symbolData };
 	},
 	component: DashboardSessionRoute,
 });
 
 function DashboardSessionRoute() {
 	const data = Route.useLoaderData();
-	const hydratedData = data as SessionDashboardHydration | null;
+	const hydratedData = data.dashboard as SessionDashboardHydration | null;
+	const initialSymbolData = data.symbolData as SessionSymbolHydration | null;
 	const params = Route.useParams();
 	const search = Route.useSearch();
 	const navigate = useNavigate({ from: "/dashboard/$sessionId" });
+	const resolvedSymbol = hydratedData
+		? normalizeSessionSymbol(search?.symbol, hydratedData.session.symbols)
+		: undefined;
 
 	useEffect(() => {
-		if (!hydratedData) {
+		if (!hydratedData || !resolvedSymbol) {
 			return;
 		}
 
 		if (
 			!shouldReplaceSessionSymbolInUrl({
 				requestedSymbol: search?.symbol,
-				resolvedSymbol: hydratedData.symbol,
+				resolvedSymbol,
 				supportedSymbols: hydratedData.session.symbols,
 			})
 		) {
@@ -61,12 +88,12 @@ function DashboardSessionRoute() {
 		void navigate({
 			to: "/dashboard/$sessionId",
 			params,
-			search: { symbol: hydratedData.symbol },
+			search: { symbol: resolvedSymbol },
 			replace: true,
 		});
-	}, [hydratedData, navigate, params, search?.symbol]);
+	}, [hydratedData, navigate, params, resolvedSymbol, search?.symbol]);
 
-	if (!hydratedData) {
+	if (!hydratedData || !initialSymbolData || !resolvedSymbol) {
 		return (
 			<main className="mx-auto flex min-h-[calc(100vh-9rem)] w-full max-w-3xl items-center justify-center px-4 py-8">
 				<div className="rounded-3xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)] px-6 py-10 text-center text-sm text-[var(--terminal-text-muted)]">
@@ -76,20 +103,12 @@ function DashboardSessionRoute() {
 		);
 	}
 
-	const requestedSymbol = search?.symbol;
-	const selectedSymbol = isSupportedSessionSymbol(
-		requestedSymbol,
-		hydratedData.session.symbols,
-	)
-		? requestedSymbol
-		: hydratedData.symbol;
-
 	return (
 		<SessionDashboardProvider
 			value={{
 				sessionId: hydratedData.session.id,
 				session: hydratedData.session,
-				symbol: selectedSymbol,
+				symbol: resolvedSymbol,
 				setSymbol: (symbol) =>
 					void navigate({
 						to: "/dashboard/$sessionId",
@@ -99,12 +118,10 @@ function DashboardSessionRoute() {
 				isLive: hydratedData.isLive,
 				simState: hydratedData.simState,
 				watchlist: hydratedData.watchlist,
-				bars: hydratedData.bars,
-				snapshot: hydratedData.snapshot,
-				trades: hydratedData.trades,
 				researchNotes: hydratedData.researchNotes,
 				agentRoster: hydratedData.agentRoster,
 				agentEvents: hydratedData.agentEvents,
+				initialSymbolData,
 			}}
 		>
 			<main

@@ -12,6 +12,7 @@ import {
 	ticks,
 	trades,
 } from "#/db/schema";
+import { postgresStore } from "#/mastra/stores/postgres";
 import {
 	getSupportedSessionSymbols,
 	normalizeSessionSymbol,
@@ -29,18 +30,24 @@ import type {
 	Trade,
 	OHLCVBarData,
 	TradeData,
+	OHLCVBar,
 } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 import type {
 	AgentEvent,
 	SessionDashboardHydration,
 	SessionAgentRosterEntry,
+	SessionSymbolHydration,
 	SessionWatchlistEntry,
 	SimulationSessionSummary,
 	TickSummary,
 	TickSummaryData,
 } from "#/types/sim";
 import type { AutopilotDirective } from "#/types/agent";
+
+export type DeleteSimulationSessionResult = {
+	status: "deleted" | "deleting";
+};
 
 const SESSION_NAME_FORMATTER = new Intl.DateTimeFormat("en-US", {
 	month: "short",
@@ -133,17 +140,21 @@ function mapResearchNoteRow(row: typeof researchNotes.$inferSelect): ResearchNot
 }
 
 function serializeTradeForSummary(trade: Trade): TradeData {
-	return {
-		id: trade.id,
-		buyOrderId: trade.buyOrderId,
-		sellOrderId: trade.sellOrderId,
-		buyerAgentId: trade.buyerAgentId,
-		sellerAgentId: trade.sellerAgentId,
-		symbol: trade.symbol,
-		price: trade.price.toNumber(),
-		qty: trade.qty,
-		tick: trade.tick,
-	};
+	return serializeTrade(trade);
+}
+
+function decimalLikeToNumber(
+	value: number | string | { toNumber: () => number },
+): number {
+	if (typeof value === "number") {
+		return value;
+	}
+
+	if (typeof value === "string") {
+		return Number(value);
+	}
+
+	return value.toNumber();
 }
 
 function mapPersistedTickSummary(summary: TickSummary | null | undefined): TickSummaryData | null {
@@ -180,6 +191,95 @@ function mapAgentRosterEntry(
 
 function mapAgentEventRow(row: typeof agentEvents.$inferSelect): AgentEvent {
 	return row.payload;
+}
+
+async function getSimulationSessionById(sessionId: string) {
+	const [session] = await db
+		.select()
+		.from(simulationSessions)
+		.where(eq(simulationSessions.id, sessionId))
+		.limit(1);
+
+	return session ?? null;
+}
+
+async function deleteSessionObservability(sessionId: string): Promise<void> {
+	const observabilityStore = await postgresStore.getStore("observability");
+
+	if (!observabilityStore) {
+		return;
+	}
+
+	const traceIds = new Set<string>();
+	let page = 0;
+
+	while (true) {
+		const response = await observabilityStore.listTraces({
+			filters: {
+				resourceId: sessionId,
+			},
+			pagination: {
+				page,
+				perPage: 100,
+			},
+		});
+
+		for (const span of response.spans) {
+			traceIds.add(span.traceId);
+		}
+
+		if (!response.pagination.hasMore) {
+			break;
+		}
+
+		page += 1;
+	}
+
+	if (traceIds.size === 0) {
+		return;
+	}
+
+	await observabilityStore.batchDeleteTraces({
+		traceIds: [...traceIds],
+	});
+}
+
+export async function hardDeleteSimulationSession(sessionId: string): Promise<void> {
+	await deleteSessionObservability(sessionId);
+
+	await db
+		.delete(simulationSessions)
+		.where(eq(simulationSessions.id, sessionId));
+}
+
+export async function deleteSimulationSession(
+	sessionId: string,
+): Promise<DeleteSimulationSessionResult> {
+	const session = await getSimulationSessionById(sessionId);
+
+	if (!session) {
+		return { status: "deleted" };
+	}
+
+	if (session.status === "deleting") {
+		return { status: "deleting" };
+	}
+
+	if (session.status === "completed" || session.status === "failed") {
+		await hardDeleteSimulationSession(sessionId);
+		return { status: "deleted" };
+	}
+
+	await db
+		.update(simulationSessions)
+		.set({
+			status: "deleting",
+			endedAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.where(eq(simulationSessions.id, sessionId));
+
+	return { status: "deleting" };
 }
 
 export async function createSimulationSession(
@@ -255,6 +355,17 @@ export async function listRunnableSimulationSessions(): Promise<
 	return [...activeSessions, ...pendingSessions];
 }
 
+export async function listDeletingSimulationSessions(): Promise<
+	(typeof simulationSessions.$inferSelect)[]
+> {
+	return db
+		.select()
+		.from(simulationSessions)
+		.where(eq(simulationSessions.status, "deleting"))
+		.orderBy(desc(simulationSessions.updatedAt), desc(simulationSessions.createdAt))
+		.limit(100);
+}
+
 export async function markSimulationSessionActive(sessionId: string): Promise<void> {
 	const now = new Date();
 
@@ -265,7 +376,12 @@ export async function markSimulationSessionActive(sessionId: string): Promise<vo
 			startedAt: now,
 			updatedAt: now,
 		})
-		.where(eq(simulationSessions.id, sessionId));
+		.where(
+			and(
+				eq(simulationSessions.id, sessionId),
+				inArray(simulationSessions.status, ["pending", "active"]),
+			),
+		);
 }
 
 export async function markSimulationSessionFailed(sessionId: string): Promise<void> {
@@ -278,12 +394,16 @@ export async function markSimulationSessionFailed(sessionId: string): Promise<vo
 			endedAt: now,
 			updatedAt: now,
 		})
-		.where(eq(simulationSessions.id, sessionId));
+		.where(
+			and(
+				eq(simulationSessions.id, sessionId),
+				inArray(simulationSessions.status, ["pending", "active"]),
+			),
+		);
 }
 
 export async function getSessionDashboardHydration(input: {
 	sessionId: string;
-	symbol?: string;
 }): Promise<SessionDashboardHydration | null> {
 	const [session] = await db
 		.select()
@@ -301,41 +421,13 @@ export async function getSessionDashboardHydration(input: {
 		.where(eq(simConfig.sessionId, input.sessionId))
 		.limit(1);
 
-	const resolvedSymbol = normalizeSessionSymbol(input.symbol, session.symbols);
-	const [snapshotRows, latestTickRows, barRows, tradeRows, noteRows, agentRows, agentEventRows] =
+	const supportedSymbols = getSupportedSessionSymbols(session.symbols);
+	const [snapshotRows, noteRows, agentRows, agentEventRows, latestBarResults] =
 		await Promise.all([
 			db
 				.select()
 				.from(orderBookSnapshots)
 				.where(eq(orderBookSnapshots.sessionId, input.sessionId)),
-			db
-				.select()
-				.from(ticks)
-				.where(eq(ticks.sessionId, input.sessionId))
-				.orderBy(desc(ticks.tick), desc(ticks.createdAt))
-				.limit(500),
-			db
-				.select()
-				.from(ticks)
-				.where(
-					and(
-						eq(ticks.sessionId, input.sessionId),
-						eq(ticks.symbol, resolvedSymbol),
-					),
-				)
-				.orderBy(desc(ticks.tick), desc(ticks.createdAt))
-				.limit(120),
-			db
-				.select()
-				.from(trades)
-				.where(
-					and(
-						eq(trades.sessionId, input.sessionId),
-						eq(trades.symbol, resolvedSymbol),
-					),
-				)
-				.orderBy(desc(trades.tick), desc(trades.createdAt))
-				.limit(100),
 			db
 				.select()
 				.from(researchNotes)
@@ -356,20 +448,39 @@ export async function getSessionDashboardHydration(input: {
 				.where(eq(agentEvents.sessionId, input.sessionId))
 				.orderBy(desc(agentEvents.tick), desc(agentEvents.createdAt))
 				.limit(200),
+				Promise.all(
+					supportedSymbols.map(async (symbol) => {
+					const [row] = await db
+						.select()
+						.from(ticks)
+						.where(
+							and(
+								eq(ticks.sessionId, input.sessionId),
+								eq(ticks.symbol, symbol),
+							),
+						)
+						.orderBy(desc(ticks.tick), desc(ticks.createdAt))
+						.limit(1);
+
+					if (!row) {
+						return null;
+					}
+
+						return [symbol, toBar(row)] as const;
+					}),
+				),
 		]);
+
+	const latestBarBySymbol = new Map(
+		latestBarResults.filter(
+			(entry): entry is readonly [string, OHLCVBarData] => entry !== null,
+		),
+	);
 
 	const snapshotBySymbol = new Map(
 		snapshotRows.map((row) => [row.symbol, toSnapshot(row)]),
 	);
-	const latestBarBySymbol = new Map<string, OHLCVBarData>();
 
-	for (const row of latestTickRows) {
-		if (!latestBarBySymbol.has(row.symbol)) {
-			latestBarBySymbol.set(row.symbol, toBar(row));
-		}
-	}
-
-	const supportedSymbols = getSupportedSessionSymbols(session.symbols);
 	const watchlist: Record<string, SessionWatchlistEntry> = Object.fromEntries(
 		supportedSymbols.map((symbol) => [
 			symbol,
@@ -389,7 +500,6 @@ export async function getSessionDashboardHydration(input: {
 
 	return {
 		session: mapSessionSummary(session, configRow?.currentTick ?? 0),
-		symbol: resolvedSymbol,
 		isLive: session.status === "active" || session.status === "pending",
 		simState:
 			configRow === undefined
@@ -409,12 +519,123 @@ export async function getSessionDashboardHydration(input: {
 						lastSummary: mapPersistedTickSummary(configRow.lastSummary),
 					},
 		watchlist,
-		bars: barRows.map(toBar).reverse(),
-		snapshot: snapshotBySymbol.get(resolvedSymbol) ?? null,
-		trades: tradeRows.map(toTrade),
 		researchNotes: noteRows.map(mapResearchNoteRow),
 		agentRoster: agentRows.map(mapAgentRosterEntry),
 		agentEvents: agentEventRows.map(mapAgentEventRow).reverse(),
+	};
+}
+
+export async function getSessionSymbolHydration(input: {
+	sessionId: string;
+	symbol: string;
+}): Promise<SessionSymbolHydration | null> {
+	const [session] = await db
+		.select()
+		.from(simulationSessions)
+		.where(eq(simulationSessions.id, input.sessionId))
+		.limit(1);
+
+	if (!session) {
+		return null;
+	}
+
+	const resolvedSymbol = normalizeSessionSymbol(input.symbol, session.symbols);
+	const [barRows, tradeRows, snapshotRows] = await Promise.all([
+		db
+			.select()
+			.from(ticks)
+			.where(
+				and(
+					eq(ticks.sessionId, input.sessionId),
+					eq(ticks.symbol, resolvedSymbol),
+				),
+			)
+			.orderBy(desc(ticks.tick), desc(ticks.createdAt))
+			.limit(120),
+		db
+			.select()
+			.from(trades)
+			.where(
+				and(
+					eq(trades.sessionId, input.sessionId),
+					eq(trades.symbol, resolvedSymbol),
+				),
+			)
+			.orderBy(desc(trades.tick), desc(trades.createdAt))
+			.limit(100),
+		db
+			.select()
+			.from(orderBookSnapshots)
+			.where(
+				and(
+					eq(orderBookSnapshots.sessionId, input.sessionId),
+					eq(orderBookSnapshots.symbol, resolvedSymbol),
+				),
+			)
+			.limit(1),
+	]);
+
+	return {
+		symbol: resolvedSymbol,
+		bars: barRows.map(toBar).reverse(),
+		snapshot: snapshotRows[0] ? toSnapshot(snapshotRows[0]) : null,
+		trades: tradeRows.map(toTrade),
+	};
+}
+
+export async function hasSimulationSession(sessionId: string): Promise<boolean> {
+	const [session] = await db
+		.select({ id: simulationSessions.id })
+		.from(simulationSessions)
+		.where(eq(simulationSessions.id, sessionId))
+		.limit(1);
+
+	return session !== undefined;
+}
+
+export function serializeOhlcvBar(bar: OHLCVBar): OHLCVBarData {
+	return {
+		symbol: bar.symbol,
+		open: decimalLikeToNumber(bar.open),
+		high: decimalLikeToNumber(bar.high),
+		low: decimalLikeToNumber(bar.low),
+		close: decimalLikeToNumber(bar.close),
+		volume: bar.volume,
+		tick: bar.tick,
+	};
+}
+
+export function serializeTrade(trade: Trade): TradeData {
+	return {
+		id: trade.id,
+		buyOrderId: trade.buyOrderId,
+		sellOrderId: trade.sellOrderId,
+		buyerAgentId: trade.buyerAgentId,
+		sellerAgentId: trade.sellerAgentId,
+		symbol: trade.symbol,
+		price: decimalLikeToNumber(trade.price),
+		qty: trade.qty,
+		tick: trade.tick,
+	};
+}
+
+export function serializeOrderBookLevels(levels: LOBSnapshot["bids"]) {
+	return levels.map((level) => ({
+		price: decimalLikeToNumber(level.price),
+		qty: level.qty,
+		orderCount: level.orderCount,
+	}));
+}
+
+export function serializeLobSnapshot(snapshot: LOBSnapshot): LOBSnapshotData {
+	return {
+		symbol: snapshot.symbol,
+		bids: serializeOrderBookLevels(snapshot.bids),
+		asks: serializeOrderBookLevels(snapshot.asks),
+		lastPrice:
+			snapshot.lastPrice === null ? null : decimalLikeToNumber(snapshot.lastPrice),
+		spread:
+			snapshot.spread === null ? null : decimalLikeToNumber(snapshot.spread),
 	};
 }
 
@@ -424,7 +645,7 @@ export function serializeOrderBookSnapshot(input: {
 	tick: number;
 }) {
 	const normalizeLevels = (levels: LOBSnapshot["bids"]) =>
-		levels.map((level) => ({ price: Number(level.price), qty: level.qty, orderCount: level.orderCount }));
+		serializeOrderBookLevels(levels);
 
 	return {
 		sessionId: input.sessionId,

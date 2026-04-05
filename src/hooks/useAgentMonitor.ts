@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSimWebSocket } from "./useSimWebSocket";
-import { useSessionDashboard } from "./useSessionDashboard";
+import { useEffect, useMemo, useState } from "react";
+import { useSessionDashboard, useSessionDashboardLiveState } from "./useSessionDashboard";
 import type {
 	AgentDecisionEvent,
 	AgentEvent,
@@ -110,16 +109,34 @@ export function buildAgentLiveStateByAgent(
 	return nextState;
 }
 
+export function resolveSelectedAgentId(input: {
+	agentIds: string[];
+	selectedAgentId: string | undefined;
+	initialSelectedAgentId?: string;
+}): string | undefined {
+	const { agentIds, initialSelectedAgentId, selectedAgentId } = input;
+
+	if (agentIds.length === 0) {
+		return undefined;
+	}
+
+	if (selectedAgentId && agentIds.includes(selectedAgentId)) {
+		return selectedAgentId;
+	}
+
+	if (initialSelectedAgentId && agentIds.includes(initialSelectedAgentId)) {
+		return initialSelectedAgentId;
+	}
+
+	return agentIds[0];
+}
+
 export function useAgentMonitor(initialSelectedAgentId?: string) {
-	const { subscribe, isConnected } = useSimWebSocket();
-	const { isLive, sessionId, agentEvents, agentRoster } = useSessionDashboard();
+	const { isConnected, agentEvents } = useSessionDashboardLiveState();
+	const { isLive, agentRoster } = useSessionDashboard();
 	const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(
 		initialSelectedAgentId,
 	);
-	const liveStateRef = useRef<Record<string, AgentLiveState>>(
-		buildAgentLiveStateByAgent(agentRoster, agentEvents),
-	);
-	const [liveStateVersion, setLiveStateVersion] = useState(0);
 
 	const rosterById = useMemo(
 		() => Object.fromEntries(agentRoster.map((agent) => [agent.id, agent])),
@@ -129,60 +146,36 @@ export function useAgentMonitor(initialSelectedAgentId?: string) {
 		() =>
 			agentRoster
 				.map((agent) => agent.id)
-				.sort((left, right) => left.localeCompare(right)),
+					.sort((left, right) => left.localeCompare(right)),
 		[agentRoster],
 	);
 
-	useEffect(() => {
-		liveStateRef.current = buildAgentLiveStateByAgent(agentRoster, agentEvents);
-		setLiveStateVersion((prev) => prev + 1);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [agentEvents, agentRoster]);
+	const liveStateByAgent = useMemo(
+		() => buildAgentLiveStateByAgent(agentRoster, agentEvents),
+		[agentEvents, agentRoster],
+	);
 
 	useEffect(() => {
-		if (!selectedAgentId && initialSelectedAgentId) {
+		if (
+			!selectedAgentId
+			&& initialSelectedAgentId
+			&& agentIds.includes(initialSelectedAgentId)
+		) {
 			setSelectedAgentId(initialSelectedAgentId);
 		}
-	}, [initialSelectedAgentId, selectedAgentId]);
+	}, [agentIds, initialSelectedAgentId, selectedAgentId]);
 
 	useEffect(() => {
-		if (!selectedAgentId && agentIds.length > 0) {
-			setSelectedAgentId(agentIds[0]);
+		const nextSelectedAgentId = resolveSelectedAgentId({
+			agentIds,
+			selectedAgentId,
+			initialSelectedAgentId,
+		});
+
+		if (nextSelectedAgentId !== selectedAgentId) {
+			setSelectedAgentId(nextSelectedAgentId);
 		}
-	}, [agentIds, selectedAgentId]);
-
-	const handleAgentEvent = useCallback(
-		(event: AgentEvent) => {
-			const rosterEntry = rosterById[event.agentId];
-			const current =
-				liveStateRef.current[event.agentId] ?? defaultAgentLiveState(rosterEntry);
-			const nextState = applyAgentEventToLiveState(current, event);
-			if (nextState === current) {
-				return;
-			}
-
-			liveStateRef.current = {
-				...liveStateRef.current,
-				[event.agentId]: nextState,
-			};
-			setLiveStateVersion((prev) => prev + 1);
-		},
-		[rosterById],
-	);
-
-	useEffect(() => {
-		if (!isLive) {
-			return;
-		}
-
-		const unsubscribe = subscribe(`agents:${sessionId}`, handleAgentEvent);
-		return unsubscribe;
-	}, [handleAgentEvent, isLive, sessionId, subscribe]);
-
-	const liveStateByAgent = useMemo(
-		() => liveStateRef.current,
-		[liveStateVersion],
-	);
+	}, [agentIds, initialSelectedAgentId, selectedAgentId]);
 
 	const selectedLiveState = useMemo(() => {
 		if (!selectedAgentId) {

@@ -1,11 +1,12 @@
 import { memo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMarketData } from "#/hooks/useMarketData";
-import { useOrderBook } from "#/hooks/useOrderBook";
 import { useSessionDashboard } from "#/hooks/useSessionDashboard";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
+import { useWatchlistSummary } from "#/hooks/useWatchlistSummary";
 import { DEV_TICKERS } from "#/lib/constants";
 import type { TickerConfig } from "#/lib/constants";
+import type { SessionWatchlistEntry } from "#/types/sim";
+import type { WatchlistSummaryPayload } from "#/types/watchlist";
 
 
 function fmt(value: unknown) {
@@ -23,18 +24,28 @@ const WatchlistRow = memo(function WatchlistRow({
 	ticker,
 	selected,
 	onSelect,
+	summary,
+	fallback,
 }: {
 	ticker: TickerConfig;
 	selected: boolean;
 	onSelect: (symbol: string) => void;
+	summary?: WatchlistSummaryPayload;
+	fallback?: SessionWatchlistEntry | null;
 }) {
-	const { lastBar } = useMarketData(ticker.symbol);
-	const { snapshot } = useOrderBook(ticker.symbol);
-	const open = lastBar ? lastBar.open : null;
-	const close = lastBar ? lastBar.close : null;
-	const changePct = open && close && open > 0 ? ((close - open) / open) * 100 : null;
+	const lastBar = summary?.lastBar ?? fallback?.lastBar ?? undefined;
+	const snapshot = summary?.snapshot ?? fallback?.snapshot ?? undefined;
+	const lastPrice =
+		summary?.lastPrice ?? snapshot?.lastPrice ?? (lastBar ? lastBar.close : null);
+	const high = summary?.high ?? lastBar?.high ?? null;
+	const low = summary?.low ?? lastBar?.low ?? null;
+	const changePct =
+		lastBar && lastBar.open && lastBar.close && lastBar.open > 0
+			? ((lastBar.close - lastBar.open) / lastBar.open) * 100
+			: null;
 	const positive = changePct !== null && changePct >= 0;
-	const lastPrice = snapshot?.lastPrice ?? close;
+	const spread = summary?.spread ?? snapshot?.spread ?? null;
+	const volume = lastBar?.volume ?? null;
 
 	return (
 		<button
@@ -65,22 +76,24 @@ const WatchlistRow = memo(function WatchlistRow({
 			<div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] text-[var(--terminal-text-muted)]">
 				<span>
 					{lastBar
-						? <><span style={{ color: "var(--terminal-green)" }}>{fmt(lastBar.high)}</span>
+						? <><span style={{ color: "var(--terminal-green)" }}>{fmt(high)}</span>
 							{" / "}
-							<span style={{ color: "var(--terminal-red)" }}>{fmt(lastBar.low)}</span></>
+							<span style={{ color: "var(--terminal-red)" }}>{fmt(low)}</span></>
 						: "— / —"}
 				</span>
-				<span>{lastBar ? fmtVol(lastBar.volume) : "—"}</span>
-				<span>spd {fmt(snapshot?.spread)}</span>
+				<span>{volume !== null ? fmtVol(volume) : "—"}</span>
+				<span>spd {fmt(spread)}</span>
 			</div>
 		</button>
 	);
 });
 
-export function Watchlist() {
-	const parentRef = useRef<HTMLDivElement | null>(null);
-	const { symbol, setSymbol } = useSymbolSelection();
-	const { session } = useSessionDashboard();
+	export function Watchlist() {
+		const parentRef = useRef<HTMLDivElement | null>(null);
+		const { symbol, setSymbol } = useSymbolSelection();
+		const { summaries } = useWatchlistSummary();
+		const { session, watchlist } = useSessionDashboard();
+		const watchlistEntries = watchlist;
 	const tickers = session.symbols
 		.map(
 			(sessionSymbol) =>
@@ -116,11 +129,13 @@ export function Watchlist() {
 								className="absolute inset-x-0 top-0"
 								style={{ transform: `translateY(${virtualItem.start}px)`, height: virtualItem.size }}
 							>
-								<WatchlistRow
-									ticker={ticker}
-									selected={symbol === ticker.symbol}
-									onSelect={setSymbol}
-								/>
+							<WatchlistRow
+								ticker={ticker}
+								selected={symbol === ticker.symbol}
+								onSelect={setSymbol}
+								summary={summaries[ticker.symbol]}
+								fallback={watchlistEntries[ticker.symbol] ?? null}
+							/>
 							</div>
 						);
 					})}

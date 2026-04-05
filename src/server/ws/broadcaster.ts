@@ -1,7 +1,10 @@
 import { WebSocket } from "ws";
+import { parseWsChannel } from "#/types/ws";
 import { connectionManager } from "./ConnectionManager";
 
 export const broadcaster = {
+  // supported channels include:
+  // - watchlist:<sessionId> → WatchlistSummaryPayload
   broadcast: (channel: string, data: unknown) => {
     const subscribers = connectionManager.getSubscribers(channel);
     if (subscribers.size === 0) {
@@ -16,5 +19,11 @@ export const broadcaster = {
         ws.send(message);
       }
     }
-  }
+  },
+  clearSession: (sessionId: string) => {
+    connectionManager.removeChannels((channel) => {
+      const parsed = parseWsChannel(channel);
+      return parsed?.kind !== "world_events" && parsed?.sessionId === sessionId;
+    });
+  },
 };

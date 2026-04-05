@@ -1,6 +1,6 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
-import { and, asc, eq, type InferSelectModel, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, type InferSelectModel, sql } from "drizzle-orm";
 import pLimit from "p-limit";
 import { z } from "zod";
 import type { AgentRegistry, AgentRegistryEntry } from "#/agents/AgentRegistry";
@@ -666,6 +666,7 @@ export class SimOrchestrator {
 
 		try {
 			return await this.tradingAgent.stream(prompt, {
+				resourceId: this.sessionId,
 				requestContext,
 				maxSteps: 6,
 				abortSignal: controller.signal,
@@ -1562,7 +1563,12 @@ export class SimOrchestrator {
 					updatedAt: new Date(),
 					endedAt: null,
 				})
-				.where(eq(simulationSessionsTable.id, this.sessionId));
+				.where(
+					and(
+						eq(simulationSessionsTable.id, this.sessionId),
+						inArray(simulationSessionsTable.status, ["pending", "active"]),
+					),
+				);
 		});
 	}
 
@@ -1600,7 +1606,12 @@ export class SimOrchestrator {
 				updatedAt: new Date(),
 				endedAt: null,
 			})
-			.where(eq(simulationSessionsTable.id, this.sessionId));
+			.where(
+				and(
+					eq(simulationSessionsTable.id, this.sessionId),
+					inArray(simulationSessionsTable.status, ["pending", "active"]),
+				),
+			);
 	}
 
 	private emitAndCollectAgentEvent(

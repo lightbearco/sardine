@@ -13,11 +13,16 @@ function LandingPage() {
 				<div className="max-w-3xl space-y-5">
 					<div className="space-y-3">
 						<h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-							Realtime market simulation, one dashboard away.
+							World's most advanced market simulation.
 						</h1>
 						<p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-							Open the trading terminal to monitor the order book, candles,
-							agent decisions, and trade flow in a single full-screen workspace.
+							Our platform simulates financial markets using over 1,000
+							AI-driven agents, each with its own unique personality, strategy,
+							and decision-making model. Currently, we cover 500 S&P 500
+							tickers—with the flexibility to expand even further. These agents
+							are designed to reflect real-world behavior, emulating the trading
+							styles of major institutions like Goldman Sachs, BlackRock, and
+							JPMorgan.
 						</p>
 					</div>
 					<div className="flex flex-wrap gap-3">
@@ -35,25 +40,28 @@ function LandingPage() {
 								Market View
 							</div>
 							<div className="mt-2 text-sm text-foreground">
-								Candles, order book, time and sales, and market stats in one
-								layout.
+								Unified view of price action, order book depth, time & sales,
+								and key market metrics.
 							</div>
 						</div>
+
 						<div className="rounded-xl border bg-secondary/40 p-4">
 							<div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
 								Agent View
 							</div>
 							<div className="mt-2 text-sm text-foreground">
-								Track live decisions, signals, failures, and execution flow.
+								Monitor agent behavior in real time—signals, decisions,
+								execution paths, and failures.
 							</div>
 						</div>
+
 						<div className="rounded-xl border bg-secondary/40 p-4">
 							<div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
 								Control View
 							</div>
 							<div className="mt-2 text-sm text-foreground">
-								Manage sim state, tick progression, and playback speed from the
-								top bar.
+								Control the simulation with precision—adjust state, tick speed,
+								and playback seamlessly.
 							</div>
 						</div>
 					</div>

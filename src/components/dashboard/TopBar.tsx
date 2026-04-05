@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { format } from "date-fns";
 import {
 	ChevronLeftIcon,
@@ -6,10 +6,12 @@ import {
 	PlayIcon,
 	Settings2Icon,
 	StepForwardIcon,
+	Trash2Icon,
 	XIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "#/components/ui/badge";
+import { DeleteSimulationDialog } from "#/components/dashboard/DeleteSimulationDialog";
 import { Button } from "#/components/ui/button";
 import {
 	Select,
@@ -21,6 +23,7 @@ import {
 import { Separator } from "#/components/ui/separator";
 import { useSessionDashboard } from "#/hooks/useSessionDashboard";
 import { useSimControls } from "#/hooks/useSimControls";
+import { deleteSimulationSessionFn } from "#/hooks/useSimulationSessions";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
 import { DEV_TICKERS } from "#/lib/constants";
 import {
@@ -44,12 +47,17 @@ function formatTimestamp(value: Date | null | undefined) {
 export function TopBar() {
 	const { symbol } = useSymbolSelection();
 	const { session, isLive } = useSessionDashboard();
+	const navigate = useNavigate();
+	const router = useRouter();
 	const { simState, play, pause, step, isConnected, setSpeed } =
 		useSimControls();
 	const [isConfigOpen, setIsConfigOpen] = useState(false);
+	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [isDeleting, setIsDeleting] = useState(false);
 	const ticker = DEV_TICKERS.find((item) => item.symbol === symbol);
 	const latencyMs = simState?.lastSummary?.durationMs;
 	const isRunning = simState?.isRunning ?? false;
+	const isDeletingSession = session.status === "deleting";
 	const toggleLabel = isRunning ? "Pause Simulation" : "Play Simulation";
 	const toggleAction = isRunning ? pause : play;
 	const hasRuntime = simState !== null;
@@ -59,7 +67,9 @@ export function TopBar() {
 	const canStep = isControllableLiveSession && !isRunning;
 	const canAdjustSpeed = isControllableLiveSession;
 	const statusLabel =
-		session.status === "completed" || session.status === "failed"
+		session.status === "deleting"
+			? "Deleting"
+			: session.status === "completed" || session.status === "failed"
 			? "Historical"
 			: session.status === "pending"
 				? "Queued"
@@ -71,15 +81,37 @@ export function TopBar() {
 	const statusClassName =
 		statusLabel === "Running"
 			? "border-transparent bg-primary/15 text-primary-foreground"
+			: statusLabel === "Deleting"
+				? "border-red-500/30 bg-red-500/10 text-red-200"
 			: statusLabel === "Queued"
 				? "border-amber-500/30 bg-amber-500/10 text-amber-200"
 				: "border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text-muted)]";
 	const statusHint =
-		session.status === "pending"
+		session.status === "deleting"
+			? "Session delete is in progress. Runtime cleanup finishes before the data is removed."
+			: session.status === "pending"
 			? "Queued for the runner. It will start when capacity is available."
 			: session.status === "active" && !isConnected
 				? "Simulation runner is offline. Start the sim worker and this active session will auto-resume."
 				: null;
+
+	async function handleDeleteSession() {
+		setIsDeleting(true);
+		try {
+			await deleteSimulationSessionFn({
+				data: {
+					sessionId: session.id,
+				},
+			});
+			setIsDeleteDialogOpen(false);
+			await navigate({
+				to: "/dashboard",
+			});
+			await router.invalidate();
+		} finally {
+			setIsDeleting(false);
+		}
+	}
 
 	return (
 		<>
@@ -139,6 +171,7 @@ export function TopBar() {
 					<Button
 						size="icon-sm"
 						variant="ghost"
+						disabled={isDeletingSession}
 						onClick={() => setIsConfigOpen(true)}
 						aria-label="Open simulation configuration"
 					>
@@ -186,6 +219,15 @@ export function TopBar() {
 							))}
 						</SelectContent>
 					</Select>
+					<Button
+						size="sm"
+						variant="destructive"
+						disabled={isDeletingSession || isDeleting}
+						onClick={() => setIsDeleteDialogOpen(true)}
+					>
+						<Trash2Icon className="mr-1.5 size-4" />
+						{isDeleting ? "Deleting..." : "Delete"}
+					</Button>
 				</div>
 			</header>
 
@@ -287,6 +329,19 @@ export function TopBar() {
 						</div>
 					</div>
 				</div>
+			) : null}
+
+			{isDeleteDialogOpen ? (
+				<DeleteSimulationDialog
+					sessionName={session.name}
+					isDeleting={isDeleting}
+					onCancel={() => {
+						if (!isDeleting) {
+							setIsDeleteDialogOpen(false);
+						}
+					}}
+					onConfirm={() => void handleDeleteSession()}
+				/>
 			) : null}
 		</>
 	);

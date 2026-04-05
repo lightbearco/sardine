@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useRef } from "react";
 import { Badge } from "#/components/ui/badge";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAgentFeed } from "#/hooks/useAgentFeed";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "#/components/ui/tooltip";
 
 function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 	if (event.type === "signal") {
@@ -50,20 +56,17 @@ const SIDE_CLASS: Record<string, string> = {
 	FAIL: "bg-red-500/15 text-red-300 border-transparent",
 };
 
-const COLS = "grid-cols-[48px_1.2fr_72px_60px_64px_44px_1.6fr_12px]";
+const COLS = "grid-cols-[48px_1.2fr_72px_60px_64px_44px_1.6fr]";
 
 export function Blotter() {
 	const { events } = useAgentFeed(200);
-	const [expandedIndexes, setExpandedIndexes] = useState<Set<number>>(new Set());
-
-	function toggleRow(index: number) {
-		setExpandedIndexes((prev) => {
-			const next = new Set(prev);
-			if (next.has(index)) next.delete(index);
-			else next.add(index);
-			return next;
-		});
-	}
+	const listRef = useRef<HTMLDivElement | null>(null);
+	const virtualizer = useVirtualizer({
+		count: events.length,
+		getScrollElement: () => listRef.current,
+		estimateSize: () => 52,
+		overscan: 6,
+	});
 
 	return (
 		<section className="flex h-full min-h-0 flex-col rounded-xl border border-(--terminal-border) bg-(--terminal-surface) overflow-hidden">
@@ -73,45 +76,71 @@ export function Blotter() {
 			</div>
 
 			<div className={`grid ${COLS} items-center gap-2 border-b border-(--terminal-border) px-3 py-[3px] shrink-0`}>
-				{["Tick", "Agent", "Side", "Sym", "Price", "Qty", "Reasoning", ""].map((h) => (
-					<span key={h} className="text-[9px] uppercase tracking-widest text-(--terminal-text-muted)">{h}</span>
+				{["Tick", "Agent", "Side", "Sym", "Price", "Qty", "Reason"].map((h) => (
+					<span key={h} className="text-[9px] uppercase tracking-widest text-(--terminal-text-muted)">
+						{h}
+					</span>
 				))}
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-auto">
-				<div className="space-y-px">
-					{events.map((event, index) => {
-						const row = extractRow(event);
-						const rowKey = `${row.tick}-${row.agent}-${row.side}-${row.symbol}`;
-						const isExpanded = expandedIndexes.has(index);
-						return (
-							<div key={rowKey} className="border-b border-(--terminal-border) hover:bg-white/5">
-								<button
-									type="button"
-									onClick={() => toggleRow(index)}
-									className={`grid w-full ${COLS} items-center gap-2 px-3 py-2 text-xs text-(--terminal-text) text-left`}
+				<div ref={listRef} className="relative h-full">
+					<div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+						{virtualizer.getVirtualItems().map((virtualRow) => {
+							const event = events[virtualRow.index];
+							if (!event) {
+								return null;
+							}
+							const row = extractRow(event);
+
+							return (
+								<div
+									key={`${event.eventId ?? virtualRow.index}-${row.tick}-${row.agent}-${row.symbol}`}
+									className="absolute inset-x-0 border-b border-(--terminal-border) hover:bg-white/5"
+									style={{
+										transform: `translateY(${virtualRow.start}px)`,
+										height: virtualRow.size,
+									}}
 								>
-									<span className="tabular-nums text-(--terminal-text-muted)">{row.tick}</span>
-									<span className="truncate">{row.agent}</span>
-									<Badge className={SIDE_CLASS[row.side] ?? "bg-secondary text-secondary-foreground"}>
-										{row.side}
-									</Badge>
-									<span className="truncate">{row.symbol}</span>
-									<span className="tabular-nums">{row.price}</span>
-									<span className="tabular-nums">{row.qty}</span>
-									<span className="truncate text-(--terminal-text-muted)">{row.reasoning}</span>
-									<span className="text-[10px] text-(--terminal-text-muted)">{isExpanded ? "▲" : "▼"}</span>
-								</button>
-								{isExpanded && (
-									<div className="border-t border-(--terminal-border) px-3 py-2">
-										<p className="whitespace-pre-wrap text-[11px] leading-[1.6] text-(--terminal-text-muted)">
-											{row.reasoning}
-										</p>
-									</div>
-								)}
-							</div>
-						);
-					})}
+									<button
+										type="button"
+										className={`grid w-full ${COLS} items-center gap-2 px-3 py-2 text-xs text-(--terminal-text) text-left`}
+									>
+										<span className="tabular-nums text-(--terminal-text-muted)">{row.tick}</span>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span className="truncate text-[var(--terminal-text)]">
+													{row.agent}
+												</span>
+											</TooltipTrigger>
+											<TooltipContent side="bottom">
+												<span className="text-[11px] text-(--terminal-text)">{row.agent}</span>
+											</TooltipContent>
+										</Tooltip>
+										<Badge className={SIDE_CLASS[row.side] ?? "bg-secondary text-secondary-foreground"}>
+											{row.side}
+										</Badge>
+										<span className="truncate">{row.symbol}</span>
+										<span className="tabular-nums">{row.price}</span>
+										<span className="tabular-nums">{row.qty}</span>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span className="flex cursor-help items-center gap-1 truncate text-(--terminal-text-muted)">
+													<span className="text-[10px] font-semibold">Reason</span>
+													<span className="text-[10px] font-semibold text-(--terminal-text-muted)">?</span>
+												</span>
+											</TooltipTrigger>
+											<TooltipContent side="bottom">
+												<p className="max-w-xs whitespace-pre-wrap text-[11px] leading-[1.4] text-(--terminal-text)">
+													{row.reasoning}
+												</p>
+											</TooltipContent>
+										</Tooltip>
+									</button>
+								</div>
+							);
+						})}
+					</div>
 				</div>
 			</div>
 		</section>

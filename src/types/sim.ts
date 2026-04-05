@@ -73,7 +73,8 @@ export type SimulationSessionStatus =
 	| "pending"
 	| "active"
 	| "completed"
-	| "failed";
+	| "failed"
+	| "deleting";
 
 export interface SimulationSessionSummary {
 	id: string;
@@ -100,16 +101,19 @@ export interface SessionWatchlistEntry {
 
 export interface SessionDashboardHydration {
 	session: SimulationSessionSummary;
-	symbol: string;
 	isLive: boolean;
 	simState: SimRuntimeStateData | null;
 	watchlist: Record<string, SessionWatchlistEntry>;
-	bars: OHLCVBarData[];
-	snapshot: LOBSnapshotData | null;
-	trades: TradeData[];
 	researchNotes: ResearchNote[];
 	agentRoster: SessionAgentRosterEntry[];
 	agentEvents: AgentEvent[];
+}
+
+export interface SessionSymbolHydration {
+	symbol: string;
+	bars: OHLCVBarData[];
+	snapshot: LOBSnapshotData | null;
+	trades: TradeData[];
 }
 
 export interface SessionAgentPosition {

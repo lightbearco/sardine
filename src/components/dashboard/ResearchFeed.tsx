@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { ScrollArea } from "#/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
 import { useResearchFeed } from "#/hooks/useResearchFeed";
 import type { ResearchNote } from "#/types/research";
 
@@ -15,6 +16,13 @@ const FOCUS_CLASS: Record<string, string> = {
 	macro: "bg-purple-500/10 text-purple-300 border-transparent",
 	sentiment: "bg-amber-500/10 text-amber-300 border-transparent",
 	filings: "bg-cyan-500/10 text-cyan-300 border-transparent",
+};
+
+const FOCUS_TOOLTIP: Record<string, string> = {
+	news: "News-driven insights",
+	macro: "Macro-economic coverage",
+	sentiment: "Market sentiment observations",
+	filings: "Company filings / disclosures",
 };
 
 function formatSources(sources: string[]): string {
@@ -77,24 +85,67 @@ export function ResearchFeed() {
 
 										{/* Meta chips — always visible */}
 										<div className="mt-1.5 flex flex-wrap items-center gap-1">
-											<Badge className={`${FOCUS_CLASS[note.focus] ?? "border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted)"} text-[10px] px-1.5 py-0`}>
-												{note.focus}
-											</Badge>
-											<Badge className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text) text-[10px] px-1.5 py-0">
-												{Math.round(note.confidence * 100)}% conf
-											</Badge>
-											<Badge className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted) text-[10px] px-1.5 py-0">
-												t{note.publishedAtTick}
-											</Badge>
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<Badge className={`${FOCUS_CLASS[note.focus] ?? "border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted)"} text-[10px] px-1.5 py-0`}>
+														{note.focus}
+													</Badge>
+												</TooltipTrigger>
+												<TooltipContent side="top">
+													<span className="text-[11px] text-(--terminal-text)">
+														{FOCUS_TOOLTIP[note.focus] ?? "Research focus"}
+													</span>
+												</TooltipContent>
+											</Tooltip>
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<Badge className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text) text-[10px] px-1.5 py-0">
+														{Math.round(note.confidence * 100)}% conf
+													</Badge>
+												</TooltipTrigger>
+												<TooltipContent side="top">
+													<span className="text-[11px] text-(--terminal-text)">
+														Model confidence on this note
+													</span>
+												</TooltipContent>
+											</Tooltip>
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<Badge className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted) text-[10px] px-1.5 py-0">
+														t{note.publishedAtTick}
+													</Badge>
+												</TooltipTrigger>
+												<TooltipContent side="top">
+													<span className="text-[11px] text-(--terminal-text)">
+														Published at tick {note.publishedAtTick}
+													</span>
+												</TooltipContent>
+											</Tooltip>
 											{note.symbols.map((symbol) => (
-												<Badge key={`${note.id}-${symbol}`} className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text) text-[10px] px-1.5 py-0">
-													{symbol}
-												</Badge>
+												<Tooltip key={`${note.id}-${symbol}`}>
+													<TooltipTrigger asChild>
+														<Badge className="border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text) text-[10px] px-1.5 py-0">
+															{symbol}
+														</Badge>
+													</TooltipTrigger>
+													<TooltipContent side="top">
+														<span className="text-[11px] text-(--terminal-text)">Symbol {symbol}</span>
+													</TooltipContent>
+												</Tooltip>
 											))}
 											{note.sources.length > 0 && (
-												<span className="text-[10px] text-(--terminal-text-muted) truncate">
-													{formatSources(note.sources)}
-												</span>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<span className="text-[10px] text-(--terminal-text-muted) truncate">
+															{formatSources(note.sources)}
+														</span>
+													</TooltipTrigger>
+													<TooltipContent side="top">
+														<span className="text-[11px] text-(--terminal-text)">
+															Sources: {note.sources.length} entries
+														</span>
+													</TooltipContent>
+												</Tooltip>
 											)}
 										</div>
 									</button>

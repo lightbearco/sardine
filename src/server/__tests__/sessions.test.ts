@@ -118,49 +118,7 @@ describe("getSessionDashboardHydration", () => {
 			},
 		]);
 		queueSelectResult([
-			{
-				id: 1,
-				sessionId: "sim_123",
-				tick: 10,
-				symbol: "NVDA",
-				open: 100,
-				high: 102,
-				low: 99,
-				close: 101,
-				volume: 1000,
-				createdAt: new Date(),
-			},
 		]);
-		queueSelectResult([
-			{
-				id: 2,
-				sessionId: "sim_123",
-				tick: 10,
-				symbol: "NVDA",
-				open: 100,
-				high: 102,
-				low: 99,
-				close: 101,
-				volume: 1000,
-				createdAt: new Date(),
-			},
-		]);
-		queueSelectResult([
-			{
-				id: "trade-1",
-				sessionId: "sim_123",
-				tick: 10,
-				symbol: "NVDA",
-				buyOrderId: "buy-1",
-				sellOrderId: "sell-1",
-				buyerAgentId: "agent-1",
-				sellerAgentId: "agent-2",
-				price: 101.25,
-				quantity: 10,
-				createdAt: new Date(),
-			},
-		]);
-		queueSelectResult([]);
 		queueSelectResult([
 			{
 				id: "agent-1",
@@ -234,14 +192,104 @@ describe("getSessionDashboardHydration", () => {
 				createdAt: new Date(),
 			},
 		]);
+		queueSelectResult([]);
+		queueSelectResult([
+			{
+				id: 2,
+				sessionId: "sim_123",
+				tick: 10,
+				symbol: "NVDA",
+				open: 100,
+				high: 102,
+				low: 99,
+				close: 101,
+				volume: 1000,
+				createdAt: new Date(),
+			},
+		]);
+		queueSelectResult([
+			{
+				id: "sim_123",
+				name: "Simulation",
+				status: "active",
+				symbols: ["AAPL", "NVDA"],
+				seed: 42,
+				agentCount: 50,
+				groupCount: 10,
+				tickIntervalMs: 1000,
+				simulatedTickDuration: 5,
+				traderDistribution: {
+					tier1: 2,
+					hedgeFund: 3,
+					marketMaker: 3,
+					pension: 2,
+					momentum: 15,
+					value: 10,
+					noise: 10,
+					depthProvider: 5,
+				},
+				createdAt: new Date("2026-04-05T10:00:00.000Z"),
+				updatedAt: new Date("2026-04-05T10:10:00.000Z"),
+				startedAt: new Date("2026-04-05T10:00:00.000Z"),
+				endedAt: null,
+			},
+		]);
+		queueSelectResult([
+			{
+				id: 2,
+				sessionId: "sim_123",
+				tick: 10,
+				symbol: "NVDA",
+				open: 100,
+				high: 102,
+				low: 99,
+				close: 101,
+				volume: 1000,
+				createdAt: new Date(),
+			},
+		]);
+		queueSelectResult([
+			{
+				id: "trade-1",
+				sessionId: "sim_123",
+				tick: 10,
+				symbol: "NVDA",
+				buyOrderId: "buy-1",
+				sellOrderId: "sell-1",
+				buyerAgentId: "agent-1",
+				sellerAgentId: "agent-2",
+				price: 101.25,
+				quantity: 10,
+				createdAt: new Date(),
+			},
+		]);
+		queueSelectResult([
+			{
+				id: 1,
+				sessionId: "sim_123",
+				symbol: "NVDA",
+				tick: 10,
+				bids: [],
+				asks: [],
+				lastPrice: 101.5,
+				spread: 0.1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+		]);
 
-		const { getSessionDashboardHydration } = await import("../sessions");
+		const {
+			getSessionDashboardHydration,
+			getSessionSymbolHydration,
+		} = await import("../sessions");
 		const hydration = await getSessionDashboardHydration({
+			sessionId: "sim_123",
+		});
+		const symbolHydration = await getSessionSymbolHydration({
 			sessionId: "sim_123",
 			symbol: "NVDA",
 		});
 
-		expect(hydration?.symbol).toBe("NVDA");
 		expect(hydration?.simState).toMatchObject({
 			simTick: 10,
 			activeGroupIndex: 0,
@@ -254,5 +302,9 @@ describe("getSessionDashboardHydration", () => {
 		expect(hydration?.agentEvents).toHaveLength(1);
 		expect(hydration?.agentEvents[0]?.eventId).toBe("event-1");
 		expect(hydration?.watchlist.NVDA?.snapshot?.lastPrice).toBe(101.5);
+		expect(symbolHydration?.symbol).toBe("NVDA");
+		expect(symbolHydration?.snapshot?.lastPrice).toBe(101.5);
+		expect(symbolHydration?.bars).toHaveLength(1);
+		expect(symbolHydration?.trades).toHaveLength(1);
 	});
 });

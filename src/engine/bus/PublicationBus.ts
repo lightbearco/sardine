@@ -54,4 +54,13 @@ export class PublicationBus {
 
 		return result;
 	}
+
+	clear(): void {
+		this.queue = [];
+		this.released = new Map<TierKey, Set<string>>([
+			["tier1", new Set()],
+			["tier2", new Set()],
+			["tier3", new Set()],
+		]);
+	}
 }

@@ -1,6 +1,7 @@
 import type { OHLCVBar, LOBSnapshot, Trade } from "./market";
 import type { ResearchNote } from "./research";
 import type { AgentEvent, SimRuntimeState } from "./sim";
+import type { WatchlistSummaryPayload } from "./watchlist";
 
 // ── Message Types ──
 
@@ -23,6 +24,7 @@ export enum WsMessageType {
 // ── Channel Types ──
 
 export type WsChannel =
+	| `watchlist:${string}` // per-session watchlist summary
 	| `ohlcv:${string}:${string}` // per-session, per-symbol OHLCV
 	| `lob:${string}:${string}` // per-session, per-symbol order book
 	| `trades:${string}:${string}` // per-session, per-symbol trades
@@ -32,6 +34,12 @@ export type WsChannel =
 	| "world_events"; // world event notifications
 
 // ── Server → Client Messages ──
+
+export interface WatchlistSummaryMessage {
+	type: "watchlist:update";
+	channel: `watchlist:${string}`;
+	data: WatchlistSummaryPayload;
+}
 
 export interface OhlcvUpdateMessage {
 	type: WsMessageType.OhlcvUpdate;
@@ -98,6 +106,7 @@ export interface SimCommandMessage {
 // ── Union Types ──
 
 export type WsServerMessage =
+	| WatchlistSummaryMessage
 	| OhlcvUpdateMessage
 	| LobUpdateMessage
 	| TradeUpdateMessage
@@ -112,3 +121,87 @@ export type WsClientMessage =
 	| SimCommandMessage;
 
 export type WsMessage = WsServerMessage | WsClientMessage;
+
+type SessionChannelKind =
+	| "watchlist"
+	| "agents"
+	| "research"
+	| "sim";
+type SymbolChannelKind = "ohlcv" | "lob" | "trades";
+
+export type ParsedWsChannel =
+	| {
+			kind: SessionChannelKind;
+			channel: WsChannel;
+			sessionId: string;
+	  }
+	| {
+			kind: SymbolChannelKind;
+			channel: WsChannel;
+			sessionId: string;
+			symbol: string;
+	  }
+	| {
+			kind: "world_events";
+			channel: WsChannel;
+	  };
+
+function isNonEmptySegment(value: string | undefined): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+export function parseWsChannel(channel: string): ParsedWsChannel | null {
+	if (channel === "world_events") {
+		return { kind: "world_events", channel };
+	}
+
+	const [kind, sessionId, symbol, extra] = channel.split(":");
+	if (extra) {
+		return null;
+	}
+
+	if (
+		(kind === "watchlist"
+			|| kind === "agents"
+			|| kind === "research"
+			|| kind === "sim")
+		&& isNonEmptySegment(sessionId)
+		&& symbol === undefined
+	) {
+		return {
+			kind,
+			channel: `${kind}:${sessionId}`,
+			sessionId,
+		};
+	}
+
+	if (
+		(kind === "ohlcv" || kind === "lob" || kind === "trades")
+		&& isNonEmptySegment(sessionId)
+		&& isNonEmptySegment(symbol)
+	) {
+		return {
+			kind,
+			channel: `${kind}:${sessionId}:${symbol}`,
+			sessionId,
+			symbol,
+		};
+	}
+
+	return null;
+}
+
+export function buildSessionChannel(
+	kind: SessionChannelKind,
+	sessionId: string,
+): WsChannel {
+	return `${kind}:${sessionId}`;
+}
+
+export function buildSymbolChannel(
+	kind: SymbolChannelKind,
+	sessionId: string,
+	symbol: string,
+): WsChannel {
+	return `${kind}:${sessionId}:${symbol}`;
+}

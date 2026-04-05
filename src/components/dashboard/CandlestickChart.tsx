@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
 	ColorType,
 	createChart,
@@ -9,6 +9,7 @@ import {
 	type Time,
 } from "lightweight-charts";
 import { useMarketData } from "#/hooks/useMarketData";
+import { useSessionDashboard } from "#/hooks/useSessionDashboard";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
 
 const TERMINAL_CHART_COLORS = {
@@ -22,9 +23,10 @@ const TERMINAL_CHART_COLORS = {
 
 function toCandleData(
 	bars: ReturnType<typeof useMarketData>["bars"],
+	convertTick: (tick: number) => Time,
 ): CandlestickData<Time>[] {
 	return bars.map((bar) => ({
-		time: bar.tick as Time,
+		time: convertTick(bar.tick),
 		open: Number(bar.open),
 		high: Number(bar.high),
 		low: Number(bar.low),
@@ -35,12 +37,13 @@ function toCandleData(
 function toVolumeData(
 	bars: ReturnType<typeof useMarketData>["bars"],
 	colors: { green: string; red: string },
+	convertTick: (tick: number) => Time,
 ): HistogramData<Time>[] {
 	return bars.map((bar) => {
 		const open = Number(bar.open);
 		const close = Number(bar.close);
 		return {
-			time: bar.tick as Time,
+			time: convertTick(bar.tick),
 			value: bar.volume,
 			color: close >= open ? colors.green : colors.red,
 		};
@@ -49,6 +52,7 @@ function toVolumeData(
 
 export function CandlestickChart() {
 	const { symbol } = useSymbolSelection();
+	const { session, simState } = useSessionDashboard();
 	const { bars, isConnected } = useMarketData(symbol);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const chartRef = useRef<IChartApi | null>(null);
@@ -57,6 +61,45 @@ export function CandlestickChart() {
 	const colorsRef = useRef(TERMINAL_CHART_COLORS);
 	const prevSymbolRef = useRef(symbol);
 	const prevLengthRef = useRef(0);
+
+	const reference = useMemo(() => {
+		if (!simState) {
+			return null;
+		}
+
+		const simulatedTime =
+			simState.simulatedTime instanceof Date
+				? simState.simulatedTime
+				: new Date(simState.simulatedTime);
+		const timeMs = simulatedTime.getTime();
+		if (!Number.isFinite(timeMs)) {
+			return null;
+		}
+
+		return {
+			tick: simState.simTick,
+			timeMs,
+		};
+	}, [simState]);
+
+	const tickDurationMs = useMemo(
+		() => session.simulatedTickDuration * 1000,
+		[session.simulatedTickDuration],
+	);
+
+	const convertTickToTime = useMemo(() => {
+		if (!reference) {
+			return (tick: number) => tick as Time;
+		}
+
+		return (tick: number) => {
+			const offsetTicks = reference.tick - tick;
+			const timestampMs = reference.timeMs - offsetTicks * tickDurationMs;
+			return Number.isFinite(timestampMs)
+				? (timestampMs / 1000) as Time
+				: (tick as Time);
+		};
+	}, [reference, tickDurationMs]);
 
 	useEffect(() => {
 		if (!containerRef.current) {
@@ -139,8 +182,8 @@ export function CandlestickChart() {
 		}
 
 		if (symbol !== prevSymbolRef.current) {
-			candleSeries.setData(toCandleData(bars));
-			volumeSeries.setData(toVolumeData(bars, colorsRef.current));
+			candleSeries.setData(toCandleData(bars, convertTickToTime));
+			volumeSeries.setData(toVolumeData(bars, colorsRef.current, convertTickToTime));
 			prevSymbolRef.current = symbol;
 			prevLengthRef.current = bars.length;
 			chart.timeScale().fitContent();
@@ -155,32 +198,32 @@ export function CandlestickChart() {
 		}
 
 		if (prevLengthRef.current === 0 || bars.length < prevLengthRef.current) {
-			candleSeries.setData(toCandleData(bars));
-			volumeSeries.setData(toVolumeData(bars, colorsRef.current));
+			candleSeries.setData(toCandleData(bars, convertTickToTime));
+			volumeSeries.setData(toVolumeData(bars, colorsRef.current, convertTickToTime));
 			chart.timeScale().fitContent();
 		} else {
 			const lastBar = bars[bars.length - 1];
-			if (lastBar) {
-				candleSeries.update({
-					time: lastBar.tick as Time,
-					open: Number(lastBar.open),
-					high: Number(lastBar.high),
-					low: Number(lastBar.low),
-					close: Number(lastBar.close),
-				});
-				volumeSeries.update({
-					time: lastBar.tick as Time,
-					value: lastBar.volume,
-					color:
-						Number(lastBar.close) >= Number(lastBar.open)
-							? colorsRef.current.green
-							: colorsRef.current.red,
-				});
-			}
+				if (lastBar) {
+					candleSeries.update({
+						time: convertTickToTime(lastBar.tick),
+						open: Number(lastBar.open),
+						high: Number(lastBar.high),
+						low: Number(lastBar.low),
+						close: Number(lastBar.close),
+					});
+					volumeSeries.update({
+						time: convertTickToTime(lastBar.tick),
+						value: lastBar.volume,
+						color:
+							Number(lastBar.close) >= Number(lastBar.open)
+								? colorsRef.current.green
+								: colorsRef.current.red,
+					});
+				}
 		}
 
 		prevLengthRef.current = bars.length;
-	}, [bars, symbol]);
+	}, [bars, symbol, convertTickToTime]);
 
 	const last = bars[bars.length - 1];
 	const open = last ? Number(last.open) : null;
