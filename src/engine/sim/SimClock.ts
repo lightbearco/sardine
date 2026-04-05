@@ -1,15 +1,31 @@
 import { SIM_DEFAULTS } from "#/lib/constants";
 
+interface SimClockOptions {
+	initialTick?: number;
+	initialTime?: Date;
+}
+
 export class SimClock {
-	private _simTick = 0;
+	private _simTick: number;
 	private _simulatedTime: Date;
 	private readonly _startTime: Date;
+	private readonly initialTick: number;
+	private readonly initialTime: Date;
 	private readonly tickDuration: number;
 
-	constructor(simulatedTickDuration: number = SIM_DEFAULTS.simulatedTickDuration) {
+	constructor(
+		simulatedTickDuration: number = SIM_DEFAULTS.simulatedTickDuration,
+		options: SimClockOptions = {},
+	) {
 		this.tickDuration = simulatedTickDuration;
 		this._startTime = marketOpen();
-		this._simulatedTime = new Date(this._startTime);
+		this.initialTick = Math.max(0, options.initialTick ?? 0);
+		this.initialTime =
+			options.initialTime === undefined
+				? new Date(this._startTime.getTime() + this.initialTick * this.tickDuration * 1000)
+				: new Date(options.initialTime);
+		this._simTick = this.initialTick;
+		this._simulatedTime = new Date(this.initialTime);
 	}
 
 	advance(): void {
@@ -20,8 +36,8 @@ export class SimClock {
 	}
 
 	reset(): void {
-		this._simTick = 0;
-		this._simulatedTime = new Date(this._startTime);
+		this._simTick = this.initialTick;
+		this._simulatedTime = new Date(this.initialTime);
 	}
 
 	get simTick(): number {

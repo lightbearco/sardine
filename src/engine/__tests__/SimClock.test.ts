@@ -43,4 +43,18 @@ describe("SimClock", () => {
 		expect(clock.simTick).toBe(0);
 		expect(clock.simulatedTime.getTime()).toBe(startTime);
 	});
+
+	it("can start from a preloaded tick boundary", () => {
+		const clock = new SimClock(5, { initialTick: 60 });
+		expect(clock.simTick).toBe(60);
+
+		const startTime = clock.simulatedTime.getTime();
+		clock.advance();
+
+		expect(clock.simTick).toBe(61);
+		expect(clock.simulatedTime.getTime() - startTime).toBe(5_000);
+
+		clock.reset();
+		expect(clock.simTick).toBe(60);
+	});
 });

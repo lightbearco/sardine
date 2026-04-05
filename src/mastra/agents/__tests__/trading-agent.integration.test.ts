@@ -10,16 +10,18 @@ import { SIM_DEFAULTS } from "#/lib/constants";
 import { marketDataTool } from "#/mastra/tools/marketDataTool";
 import { orderTool } from "#/mastra/tools/orderTool";
 import { portfolioTool } from "#/mastra/tools/portfolioTool";
+import { unwrapToolResult } from "#/mastra/tools/__tests__/test-helpers";
 import {
 	cloneTradingRequestContext,
 	type TradingRequestContextValues,
 } from "#/mastra/trading-context";
+import { TRADING_MODEL } from "#/mastra/models";
 import type {
 	AgentConfig,
 	AgentState,
 	AutopilotDirective,
 } from "#/types/agent";
-import type { Order, Trade } from "#/types/market";
+import type { Order } from "#/types/market";
 
 function registerCounterparty(
 	registry: AgentRegistry,
@@ -43,7 +45,7 @@ function registerCounterparty(
 		sectors: ["Technology"],
 		risk: 0.3,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 0,
 		decisionParams: {},
 		...overrides,
@@ -111,34 +113,42 @@ describe("trading agent deterministic integration", () => {
 		requestContext.set("agent-registry", registry);
 		requestContext.set("sim-tick", 1);
 
-		const beforeMarket = await marketDataTool.execute?.(
-			{ symbol: "AAPL" },
-			{ requestContext },
+		const beforeMarket = unwrapToolResult(
+			await marketDataTool.execute?.(
+				{ symbol: "AAPL" },
+				{ requestContext },
+			),
 		);
-		const beforePortfolio = await portfolioTool.execute?.(
-			{},
-			{ requestContext },
+		const beforePortfolio = unwrapToolResult(
+			await portfolioTool.execute?.(
+				{},
+				{ requestContext },
+			),
 		);
-		const order = await orderTool.execute?.(
-			{
-				side: "buy",
-				type: "limit",
+		const order = unwrapToolResult(
+			await orderTool.execute?.(
+				{
+					side: "buy",
+					type: "limit",
 				symbol: "AAPL",
 				price: 99,
 				qty: 10,
 			},
-			{ requestContext },
+				{ requestContext },
+			),
 		);
-		const afterPortfolio = await portfolioTool.execute?.(
-			{},
-			{ requestContext },
+		const afterPortfolio = unwrapToolResult(
+			await portfolioTool.execute?.(
+				{},
+				{ requestContext },
+			),
 		);
 
-		expect(beforeMarket?.symbol).toBe("AAPL");
-		expect(beforePortfolio?.positions).toEqual([]);
-		expect(order?.status).toBe("pending");
-		expect(order?.trades).toEqual([]);
-		expect(afterPortfolio?.openOrders).toEqual([]);
+		expect(beforeMarket.symbol).toBe("AAPL");
+		expect(beforePortfolio.positions).toEqual([]);
+		expect(order.status).toBe("pending");
+		expect(order.trades).toEqual([]);
+		expect(afterPortfolio.openOrders).toEqual([]);
 	});
 
 	it("reconciles a filled sell-down and exposes the updated position through portfolioTool", async () => {
@@ -188,25 +198,27 @@ describe("trading agent deterministic integration", () => {
 		requestContext.set("agent-registry", registry);
 		requestContext.set("sim-tick", 2);
 
-		const order = await orderTool.execute?.(
-			{
-				side: "sell",
-				type: "market",
-				symbol: "AAPL",
-				qty: 6,
-			},
-			{ requestContext },
+		const order = unwrapToolResult(
+			await orderTool.execute?.(
+				{
+					side: "sell",
+					type: "market",
+					symbol: "AAPL",
+					qty: 6,
+				},
+				{ requestContext },
+			),
 		);
 
 		const trades = engine.processOrders(
 			[
 				{
-					id: order!.orderId,
-					symbol: order!.symbol,
-					side: order!.side,
-					type: order!.type,
-					price: new Decimal(order!.price),
-					qty: order!.qty,
+					id: order.orderId,
+					symbol: order.symbol,
+					side: order.side,
+					type: order.type,
+					price: new Decimal(order.price),
+					qty: order.qty,
 					filledQty: 0,
 					status: "pending",
 					agentId: entry!.config.id,
@@ -223,10 +235,12 @@ describe("trading agent deterministic integration", () => {
 			new Map([["AAPL", new Decimal("101")]]),
 		);
 
-		const portfolio = await portfolioTool.execute?.({}, { requestContext });
+		const portfolio = unwrapToolResult(
+			await portfolioTool.execute?.({}, { requestContext }),
+		);
 
-		expect(order?.status).toBe("pending");
-		expect(portfolio?.positions).toEqual([
+		expect(order.status).toBe("pending");
+		expect(portfolio.positions).toEqual([
 			{
 				symbol: "AAPL",
 				qty: 4,
@@ -236,7 +250,7 @@ describe("trading agent deterministic integration", () => {
 				unrealizedPnl: "24",
 			},
 		]);
-		expect(portfolio?.openOrders).toEqual([]);
+		expect(portfolio.openOrders).toEqual([]);
 	});
 
 	it("bridges autopilot standing orders into tool-visible portfolio state", async () => {
@@ -312,11 +326,13 @@ describe("trading agent deterministic integration", () => {
 		requestContext.set("agent-registry", registry);
 		requestContext.set("sim-tick", 3);
 
-		const portfolio = await portfolioTool.execute?.({}, { requestContext });
+		const portfolio = unwrapToolResult(
+			await portfolioTool.execute?.({}, { requestContext }),
+		);
 
 		expect(autopilotResult.orders).toHaveLength(1);
 		expect(autopilotResult.urgentReview).toBe(false);
-		expect(portfolio?.positions).toEqual([
+		expect(portfolio.positions).toEqual([
 			{
 				symbol: "AAPL",
 				qty: 6,

@@ -3,6 +3,7 @@ import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import type { AgentConfig, AgentState } from "#/types/agent";
 import { AgentRegistry, type AgentRegistryEntry } from "../AgentRegistry";
+import { TRADING_MODEL } from "#/mastra/models";
 
 function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
@@ -22,7 +23,7 @@ function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		sectors: ["tech"],
 		risk: 0.5,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 0,
 		decisionParams: { threshold: 0.1 },
 		...overrides,
@@ -279,12 +280,12 @@ describe("AgentRegistry", () => {
 			false,
 		);
 
-		const rows = registry.toPersistenceRows();
+	const rows = registry.toPersistenceRows("test-session");
 		expect(rows).toEqual([
 			expect.objectContaining({
 				id: "agent-1",
 				entityType: "investment-bank",
-				modelId: "google/gemini-3.1-flash-lite-preview",
+				modelId: TRADING_MODEL,
 				startingCapital: 100_000,
 				currentCash: 1000,
 				currentNav: 1500,

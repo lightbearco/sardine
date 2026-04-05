@@ -5,6 +5,7 @@ import {
 	tradingAgent,
 	tradingDecisionSchema,
 } from "#/mastra/agents/trading-agent";
+import { TRADING_MODEL } from "#/mastra/models";
 import { createToolHarness } from "#/mastra/tools/__tests__/test-helpers";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 
@@ -38,24 +39,28 @@ function getAgentFields() {
 }
 
 function getInstructions(
-	requestContext?: RequestContext<TradingRequestContextValues>,
+	requestContext: RequestContext<TradingRequestContextValues>,
 ) {
 	const fields = getAgentFields();
 
+	const normalizedContext = requestContext as RequestContext<unknown>;
+
 	if (typeof fields.instructions === "function") {
-		return fields.instructions({ requestContext });
+		return fields.instructions({ requestContext: normalizedContext });
 	}
 
 	return fields.instructions;
 }
 
 function getModel(
-	requestContext?: RequestContext<TradingRequestContextValues>,
+	requestContext: RequestContext<TradingRequestContextValues>,
 ): MastraModelConfig {
 	const fields = getAgentFields();
 
 	if (typeof fields.model === "function") {
-		return fields.model({ requestContext });
+		return fields.model({
+			requestContext: requestContext as RequestContext<unknown>,
+		}) as MastraModelConfig;
 	}
 
 	return fields.model as MastraModelConfig;
@@ -141,16 +146,16 @@ describe("tradingAgent", () => {
 			provider?: string;
 		};
 
-		expect(sonnetModel.modelId).toBe("gemini-3.1-flash-lite-preview");
+		expect(sonnetModel.modelId).toBe(TRADING_MODEL);
 		expect(sonnetModel.provider).toBe("google.generative-ai");
-		expect(haikuModel.modelId).toBe("gemini-3.1-flash-lite-preview");
+		expect(haikuModel.modelId).toBe(TRADING_MODEL);
 		expect(haikuModel.provider).toBe("google.generative-ai");
 	});
 
 	it("can generate structured output with a non-network mock model", async () => {
 		const { requestContext } = createToolHarness();
 		const { createMockModel } = (await import(
-			"../../../../node_modules/@mastra/core/dist/test-utils/llm-mock.js"
+			"@mastra/core/dist/test-utils/llm-mock"
 		)) as {
 			createMockModel: (args: {
 				objectGenerationMode?: "json";

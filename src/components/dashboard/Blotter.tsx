@@ -1,18 +1,6 @@
-import { useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useAgentFeed } from "#/hooks/useAgentFeed";
+import { useState } from "react";
 import { Badge } from "#/components/ui/badge";
-import {
-	Table,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "#/components/ui/table";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "#/components/ui/tooltip";
+import { useAgentFeed } from "#/hooks/useAgentFeed";
 
 function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 	if (event.type === "signal") {
@@ -21,21 +9,21 @@ function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 			agent: event.agentName,
 			side: event.signal.side.toUpperCase(),
 			symbol: event.signal.symbol,
-			price: event.signal.price === 0 ? "MKT" : String(event.signal.price),
+			price: event.signal.price === 0 ? "MKT" : event.signal.price.toFixed(2),
 			qty: String(event.signal.qty),
-			reasoning: event.signal.reasoning ?? "No reasoning provided",
+			reasoning: event.signal.reasoning ?? "—",
 		};
 	}
 
 	if (event.type === "decision") {
-		const firstOrder = event.decision.ordersPlaced[0];
+		const first = event.decision.ordersPlaced[0];
 		return {
 			tick: event.tick,
 			agent: event.agentName,
-			side: firstOrder?.side?.toUpperCase() ?? "INFO",
-			symbol: firstOrder?.symbol ?? "—",
-			price: firstOrder?.price ?? "—",
-			qty: String(firstOrder?.qty ?? 0),
+			side: first?.side?.toUpperCase() ?? "INFO",
+			symbol: first?.symbol ?? "—",
+			price: first?.price ?? "—",
+			qty: String(first?.qty ?? 0),
 			reasoning: event.decision.reasoning,
 		};
 	}
@@ -56,97 +44,71 @@ function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 	};
 }
 
+const SIDE_CLASS: Record<string, string> = {
+	BUY: "bg-emerald-500/15 text-emerald-300 border-transparent",
+	SELL: "bg-red-500/15 text-red-300 border-transparent",
+	FAIL: "bg-red-500/15 text-red-300 border-transparent",
+};
+
+const COLS = "grid-cols-[48px_1.2fr_72px_60px_64px_44px_1.6fr_12px]";
+
 export function Blotter() {
 	const { events } = useAgentFeed(200);
-	const parentRef = useRef<HTMLDivElement | null>(null);
-	const rowVirtualizer = useVirtualizer({
-		count: events.length,
-		getScrollElement: () => parentRef.current,
-		estimateSize: () => 40,
-		overscan: 8,
-	});
+	const [expandedIndexes, setExpandedIndexes] = useState<Set<number>>(new Set());
+
+	function toggleRow(index: number) {
+		setExpandedIndexes((prev) => {
+			const next = new Set(prev);
+			if (next.has(index)) next.delete(index);
+			else next.add(index);
+			return next;
+		});
+	}
 
 	return (
-		<section className="flex h-full min-h-0 flex-col rounded-xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)]">
-			<div className="border-b border-[var(--terminal-border)] px-4 py-3">
-				<div className="text-sm font-semibold text-[var(--terminal-text)]">
-					Blotter
-				</div>
-				<div className="text-[11px] text-[var(--terminal-text-muted)]">
-					Latest agent orders and signals
-				</div>
+		<section className="flex h-full min-h-0 flex-col rounded-xl border border-(--terminal-border) bg-(--terminal-surface) overflow-hidden">
+			<div className="flex items-center justify-between border-b border-(--terminal-border) px-3 py-2 shrink-0">
+				<span className="text-xs font-semibold text-(--terminal-text)">Blotter</span>
+				<span className="text-[10px] text-(--terminal-text-muted)">{events.length} events</span>
 			</div>
-			<Table className="border-b border-[var(--terminal-border)] text-[var(--terminal-text)]">
-				<TableHeader>
-					<TableRow className="border-[var(--terminal-border)] hover:bg-transparent">
-						<TableHead className="h-9 px-4 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Tick
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Agent
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Side
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Symbol
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Price
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Qty
-						</TableHead>
-						<TableHead className="h-9 px-2 text-[11px] uppercase tracking-[0.12em] text-[var(--terminal-text-muted)]">
-							Reasoning
-						</TableHead>
-					</TableRow>
-				</TableHeader>
-			</Table>
-			<div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
-				<div
-					className="relative w-full"
-					style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-				>
-					{rowVirtualizer.getVirtualItems().map((virtualRow) => {
-						const row = extractRow(events[virtualRow.index]);
+
+			<div className={`grid ${COLS} items-center gap-2 border-b border-(--terminal-border) px-3 py-[3px] shrink-0`}>
+				{["Tick", "Agent", "Side", "Sym", "Price", "Qty", "Reasoning", ""].map((h) => (
+					<span key={h} className="text-[9px] uppercase tracking-widest text-(--terminal-text-muted)">{h}</span>
+				))}
+			</div>
+
+			<div className="min-h-0 flex-1 overflow-auto">
+				<div className="space-y-px">
+					{events.map((event, index) => {
+						const row = extractRow(event);
+						const rowKey = `${row.tick}-${row.agent}-${row.side}-${row.symbol}`;
+						const isExpanded = expandedIndexes.has(index);
 						return (
-							<div
-								key={`${row.agent}-${virtualRow.index}`}
-								className="absolute inset-x-0 top-0 border-b border-[var(--terminal-border)]"
-								style={{ transform: `translateY(${virtualRow.start}px)` }}
-							>
-								<div className="grid grid-cols-[60px_1.2fr_90px_74px_72px_56px_1.6fr] items-center gap-2 px-4 py-2 text-xs text-[var(--terminal-text)]">
-									<span>{row.tick}</span>
+							<div key={rowKey} className="border-b border-(--terminal-border) hover:bg-white/5">
+								<button
+									type="button"
+									onClick={() => toggleRow(index)}
+									className={`grid w-full ${COLS} items-center gap-2 px-3 py-2 text-xs text-(--terminal-text) text-left`}
+								>
+									<span className="tabular-nums text-(--terminal-text-muted)">{row.tick}</span>
 									<span className="truncate">{row.agent}</span>
-									<Badge
-										variant="secondary"
-										className={
-											row.side === "BUY"
-												? "bg-emerald-500/15 text-emerald-300"
-												: row.side === "SELL"
-													? "bg-red-500/15 text-red-300"
-													: row.side === "FAIL"
-														? "bg-red-500/15 text-red-300"
-														: "bg-secondary text-secondary-foreground"
-										}
-									>
+									<Badge className={SIDE_CLASS[row.side] ?? "bg-secondary text-secondary-foreground"}>
 										{row.side}
 									</Badge>
-									<span>{row.symbol}</span>
-									<span>{row.price}</span>
-									<span>{row.qty}</span>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<span className="truncate text-[var(--terminal-text-muted)]">
-												{row.reasoning}
-											</span>
-										</TooltipTrigger>
-										<TooltipContent side="top" className="max-w-sm">
+									<span className="truncate">{row.symbol}</span>
+									<span className="tabular-nums">{row.price}</span>
+									<span className="tabular-nums">{row.qty}</span>
+									<span className="truncate text-(--terminal-text-muted)">{row.reasoning}</span>
+									<span className="text-[10px] text-(--terminal-text-muted)">{isExpanded ? "▲" : "▼"}</span>
+								</button>
+								{isExpanded && (
+									<div className="border-t border-(--terminal-border) px-3 py-2">
+										<p className="whitespace-pre-wrap text-[11px] leading-[1.6] text-(--terminal-text-muted)">
 											{row.reasoning}
-										</TooltipContent>
-									</Tooltip>
-								</div>
+										</p>
+									</div>
+								)}
 							</div>
 						);
 					})}

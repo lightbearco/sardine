@@ -8,10 +8,7 @@ import {
 	tradingAgent,
 	tradingDecisionSchema,
 } from "#/mastra/agents/trading-agent";
-import {
-	getGoogleGeminiProvider,
-	hasGoogleGenerativeAIEnv,
-} from "#/mastra/google-gemini";
+import { TRADING_MODEL } from "#/mastra/models";
 import {
 	cloneTradingRequestContext,
 	type TradingRequestContextValues,
@@ -25,28 +22,30 @@ function logTradingDecision(result: {
 		autopilotDirective: unknown;
 	};
 }) {
-	console.log(`\n[live-gemini] Agent reasoning:\n${result.object.reasoning}`);
+	console.log(
+		`\n[live-trading-model] Agent reasoning:\n${result.object.reasoning}`,
+	);
 
 	if (result.reasoningText) {
 		console.log(
-			`\n[live-gemini] Model reasoning text:\n${result.reasoningText}`,
+			`\n[live-trading-model] Model reasoning text:\n${result.reasoningText}`,
 		);
 	}
 
 	console.log(
-		`\n[live-gemini] Orders placed:\n${JSON.stringify(result.object.ordersPlaced, null, 2)}`,
+		`\n[live-trading-model] Orders placed:\n${JSON.stringify(result.object.ordersPlaced, null, 2)}`,
 	);
 	console.log(
-		`\n[live-gemini] Autopilot directive:\n${JSON.stringify(result.object.autopilotDirective, null, 2)}`,
+		`\n[live-trading-model] Autopilot directive:\n${JSON.stringify(result.object.autopilotDirective, null, 2)}`,
 	);
 }
 
-const hasGoogleCredentials =
-	process.env.RUN_LIVE_GEMINI_SMOKE === "true" && hasGoogleGenerativeAIEnv();
+const hasLiveTradingModelCredentials =
+	process.env.RUN_LIVE_TRADING_MODEL_SMOKE === "true";
 
 describe("tradingAgent smoke", () => {
-	it.skipIf(!hasGoogleCredentials)(
-		"produces a structured trading decision with a real Gemini model",
+	it.skipIf(!hasLiveTradingModelCredentials)(
+		"produces a structured trading decision with a real trading model",
 		async () => {
 			const configs = generateAgentConfigs(42, 1);
 			const registry = spawnAgents(configs, SIM_DEFAULTS.groupCount);
@@ -70,7 +69,7 @@ describe("tradingAgent smoke", () => {
 				maxSteps: 6,
 				structuredOutput: {
 					schema: tradingDecisionSchema,
-					model: getGoogleGeminiProvider()("gemini-3.1-flash-lite-preview"),
+					model: TRADING_MODEL,
 				},
 			});
 

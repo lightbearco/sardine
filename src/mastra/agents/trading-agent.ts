@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
-import { getGoogleGeminiProvider } from "#/mastra/google-gemini";
+import { firecrawlTool } from "#/mastra/tools/firecrawlTool";
+import { TRADING_MODEL } from "#/mastra/models";
 import { marketDataTool } from "#/mastra/tools/marketDataTool";
 import { orderConfirmationSchema, orderTool } from "#/mastra/tools/orderTool";
 import { portfolioTool } from "#/mastra/tools/portfolioTool";
@@ -94,6 +95,7 @@ ${constraints && constraints.length > 0 ? constraints.map((constraint) => `- ${c
 
 ## Operating Rules
 - Stay fully in character and let your stated traits and biases shape your behavior.
+- Use firecrawlTool to scrape a news URL when you want current market context before deciding.
 - Use marketDataTool before trading when price discovery matters.
 - Use portfolioTool when you need to understand existing exposure or P&L.
 - Use orderTool to place any desired trade.
@@ -106,11 +108,9 @@ Return a structured object matching the provided schema:
 3. \`autopilotDirective\`: the standing orders and monitoring rules you want followed before your next LLM turn.
 `.trim();
 	},
-	model: () => {
-		const googleProvider = getGoogleGeminiProvider();
-		return googleProvider("gemini-3.1-flash-lite-preview");
-	},
+	model: TRADING_MODEL,
 	tools: {
+		firecrawlTool,
 		marketDataTool,
 		portfolioTool,
 		orderTool,

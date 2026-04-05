@@ -1,6 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import ThemeToggle from "./ThemeToggle";
-import { Button } from "./ui/button";
 
 export default function Header() {
 	return (

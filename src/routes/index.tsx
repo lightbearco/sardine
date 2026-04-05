@@ -1,9 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-	ArrowRightIcon,
-	LayoutDashboardIcon,
-	RadioTowerIcon,
-} from "lucide-react";
+import { ArrowRightIcon, LayoutDashboardIcon } from "lucide-react";
 import { Button } from "#/components/ui/button";
 
 export const Route = createFileRoute("/")({
@@ -31,9 +27,6 @@ function LandingPage() {
 								<span className="text-primary-foreground">Open Dashboard</span>
 								<ArrowRightIcon className="size-4 text-primary-foreground" />
 							</Link>
-						</Button>
-						<Button variant="secondary" size="lg">
-							<Link to="/about">About Sardine</Link>
 						</Button>
 					</div>
 					<div className="grid gap-3 pt-4 sm:grid-cols-3">

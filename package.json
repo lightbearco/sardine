@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
+    "dev:full": "node scripts/dev-full.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -20,7 +21,8 @@
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
-    "sim": "tsx src/server/sim-runner.ts"
+    "sim": "tsx src/server/sim-runner.ts",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
@@ -54,6 +56,7 @@
     "@tanstack/react-virtual": "^3.11.3",
     "@tanstack/router-plugin": "^1.132.0",
     "ai": "^4.3.16",
+    "allotment": "^1.20.5",
     "better-auth": "^1.5.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

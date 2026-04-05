@@ -6,12 +6,13 @@ import {
 	Observability,
 	SensitiveDataFilter,
 } from "@mastra/observability";
+import { researchAgent } from "#/mastra/agents/research-agent";
 import { tradingAgent } from "#/mastra/agents/trading-agent";
 import { pgVector } from "#/mastra/stores/pgvector";
 import { postgresStore } from "./stores/postgres";
 
 export const mastra = new Mastra({
-	agents: { tradingAgent },
+	agents: { tradingAgent, researchAgent },
 	storage: postgresStore,
 	vectors: {
 		pgVector,

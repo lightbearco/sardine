@@ -1,7 +1,7 @@
-import Decimal from "decimal.js";
-import { asc, eq, sql, type InferSelectModel } from "drizzle-orm";
-import pLimit from "p-limit";
 import type { RequestContext } from "@mastra/core/request-context";
+import Decimal from "decimal.js";
+import { and, asc, eq, type InferSelectModel, sql } from "drizzle-orm";
+import pLimit from "p-limit";
 import { z } from "zod";
 import type { AgentRegistry, AgentRegistryEntry } from "#/agents/AgentRegistry";
 import { executeAutopilot } from "#/agents/autopilot";
@@ -11,12 +11,15 @@ import {
 } from "#/agents/batch-scheduler";
 import { PortfolioManager } from "#/agents/PortfolioManager";
 import { serializeAgentEntryForDb } from "#/agents/persistence";
-import type { Database } from "#/db";
+import type { Database } from "#/db/index";
 import {
+	agentEvents as agentEventsTable,
 	agents as agentsTable,
 	commands as commandsTable,
+	orderBookSnapshots as orderBookSnapshotsTable,
 	orders as ordersTable,
 	simConfig as simConfigTable,
+	simulationSessions as simulationSessionsTable,
 	ticks as ticksTable,
 	trades as tradesTable,
 	worldEvents as worldEventsTable,
@@ -29,22 +32,27 @@ import {
 	type TradingDecision,
 	tradingDecisionSchema,
 } from "#/mastra/agents/trading-agent";
-import { getGoogleGeminiProvider } from "#/mastra/google-gemini";
+import { TRADING_MODEL } from "#/mastra/models";
 import {
 	cloneTradingRequestContext,
 	type TradingRequestContextValues,
 } from "#/mastra/trading-context";
+import { serializeOrderBookSnapshot } from "#/server/sessions";
 import type { OHLCVBar, Order, Trade } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 import type {
 	AgentDecisionEvent,
 	AgentDecisionOrder,
+	AgentEvent,
 	AgentFailureReason,
+	AgentFailedEvent,
 	AgentSignal,
+	AgentSignalEvent,
+	AgentThinkingDeltaEvent,
 	InjectWorldEventCommand,
 	ParsedSimCommand,
-	SimRuntimeState,
 	SimOrchestratorState,
+	SimRuntimeState,
 	StagedOrderResult,
 	TickSummary,
 	WorldEvent,
@@ -57,7 +65,6 @@ import type { SimClock } from "./SimClock";
 
 const DEFAULT_LLM_CONCURRENCY = 10;
 const DEFAULT_LLM_TIMEOUT_MS = 15_000;
-const SIM_CONFIG_ROW_ID = 1;
 
 type CommandRow = InferSelectModel<typeof commandsTable>;
 type TradingAgentStreamLike = {
@@ -83,9 +90,19 @@ interface ControlCommandOutcome {
 	stepCount: number;
 }
 
+interface RuntimeHydrationState {
+	isRunning: boolean;
+	speedMultiplier: number;
+	tickIntervalMs: number;
+	lastSummary: TickSummary | null;
+	agentEventSequence?: number;
+}
+
 interface ActiveAgentOutcome {
 	stagedOrders: StagedOrderResult[];
 }
+
+type ReleasedResearchByAgent = Map<string, ResearchNote[]>;
 
 class ActiveAgentGenerationError extends Error {
 	constructor(
@@ -109,6 +126,9 @@ export class SimOrchestrator {
 	private speedMultiplier = 1;
 	private tickIntervalMs: number = SIM_DEFAULTS.tickIntervalMs;
 	private readonly supportedSymbols: ReadonlySet<string>;
+	private readonly sessionId: string;
+	private agentEventSequence = 0;
+	private runtimeLogMessages: string[] = [];
 
 	constructor(
 		private readonly matchingEngine: MatchingEngine,
@@ -122,12 +142,20 @@ export class SimOrchestrator {
 			llmConcurrency?: number;
 			llmTimeoutMs?: number;
 			groupCount?: number;
+			sessionId?: string;
+			tickIntervalMs?: number;
 		} = {},
 	) {
 		this.llmConcurrency = options.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
 		this.llmTimeoutMs = options.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
 		this.groupCount = options.groupCount ?? SIM_DEFAULTS.groupCount;
+		this.tickIntervalMs = options.tickIntervalMs ?? SIM_DEFAULTS.tickIntervalMs;
 		this.supportedSymbols = new Set(this.matchingEngine.getSymbols());
+		this.sessionId = options.sessionId ?? "default-session";
+	}
+
+	getSessionId(): string {
+		return this.sessionId;
 	}
 
 	async start(): Promise<void> {
@@ -203,10 +231,27 @@ export class SimOrchestrator {
 		return this.buildRuntimeState();
 	}
 
+	getReferencePrices(): Map<string, Decimal> {
+		return this.matchingEngine.getReferencePrices();
+	}
+
+	hydrateRuntimeState(state: RuntimeHydrationState): void {
+		this.isRunning = state.isRunning;
+		this.speedMultiplier = state.speedMultiplier;
+		this.tickIntervalMs = state.tickIntervalMs;
+		this.lastSummary = state.lastSummary;
+		this.agentEventSequence = Math.max(0, state.agentEventSequence ?? 0);
+		this.runtimeLogMessages = [];
+	}
+
+	consumeRuntimeLogMessages(): string[] {
+		const messages = [...this.runtimeLogMessages];
+		this.runtimeLogMessages = [];
+		return messages;
+	}
+
 	async tick(
-		options: {
-			skipPendingCommands?: boolean;
-		} = {},
+		options: { skipPendingCommands?: boolean } = {},
 	): Promise<TickSummary> {
 		if (this.isTicking) {
 			throw new Error("SimOrchestrator is already processing a tick");
@@ -229,12 +274,14 @@ export class SimOrchestrator {
 				? {
 						commandUpdates: [] as CommandUpdate[],
 						appliedWorldEvents: [] as WorldEvent[],
-						stepCount: 0,
 					}
 				: this.processPendingCommands(pendingCommands, simTick);
 
 			const releasedNotes = this.publicationBus.releaseDue(simTick);
-			this.deliverReleasedResearch(releasedNotes, changedAgentIds);
+			const releasedNotesByAgent = this.deliverReleasedResearch(
+				releasedNotes,
+				changedAgentIds,
+			);
 
 			const { active, inactive } = partitionAgentEntries(
 				this.agentRegistry,
@@ -255,6 +302,7 @@ export class SimOrchestrator {
 			);
 
 			const stagedOrders: StagedOrderResult[] = [];
+			const agentEvents: AgentEvent[] = [];
 
 			for (const entry of inactive) {
 				const autopilotResult = executeAutopilot(
@@ -305,13 +353,14 @@ export class SimOrchestrator {
 				simTick,
 				simulatedTime,
 				changedAgentIds,
+				releasedNotesByAgent,
+				agentEvents,
 			);
 
 			stagedOrders.push(...activeOutcome.stagedOrders);
 			const dedupedOrders = this.deduplicateStagedOrders(stagedOrders);
-			const { freshOrders, replayedOrders } = this.partitionReplayedOpenOrders(
-				dedupedOrders,
-			);
+			const { freshOrders, replayedOrders } =
+				this.partitionReplayedOpenOrders(dedupedOrders);
 			const { validOrders, rejectedOrders } = this.partitionUnsupportedOrders(
 				freshOrders,
 				changedAgentIds,
@@ -365,9 +414,11 @@ export class SimOrchestrator {
 				persistedOrders,
 				trades,
 				bars,
+				agentEvents,
 				commandUpdates,
 				appliedWorldEvents,
 				changedAgentIds,
+				touchedSymbols,
 				simulatedTime,
 			);
 
@@ -406,6 +457,7 @@ export class SimOrchestrator {
 			};
 
 			this.lastSummary = summary;
+			await this.persistSimConfig();
 			this.eventBus.emit("tick", { simTick, simulatedTime });
 			this.eventBus.emit("sim-state", this.buildRuntimeState(active.length));
 
@@ -420,10 +472,20 @@ export class SimOrchestrator {
 		simTick: number,
 		simulatedTime: Date,
 		changedAgentIds: Set<string>,
+		releasedNotesByAgent: ReleasedResearchByAgent,
+		agentEvents: AgentEvent[],
 	): Promise<ActiveAgentOutcome> {
 		const limit = pLimit(this.llmConcurrency);
 		const tasks = activeEntries.map((entry) =>
-			limit(() => this.generateForActiveAgent(entry, simTick, simulatedTime)),
+			limit(() =>
+				this.generateForActiveAgent(
+					entry,
+					simTick,
+					simulatedTime,
+					releasedNotesByAgent.get(entry.config.id) ?? [],
+					agentEvents,
+				),
+			),
 		);
 		const settledResults = await Promise.allSettled(tasks);
 		const stagedOrders: StagedOrderResult[] = [];
@@ -449,16 +511,19 @@ export class SimOrchestrator {
 			entry.state.lastAutopilotDirective = fallbackDirective;
 			entry.state.lastLlmTick = simTick;
 			changedAgentIds.add(entry.config.id);
-			this.eventBus.emit("agent-event", {
-				type: "failed",
-				agentId: entry.config.id,
-				agentName: entry.config.name,
-				tick: simTick,
-				reason: failure.reason,
-				message: failure.message,
-				transcript: failure.transcript,
-				fallbackDirective,
-			});
+			this.emitAndCollectAgentEvent(
+				agentEvents,
+				{
+					type: "failed",
+					agentId: entry.config.id,
+					agentName: entry.config.name,
+					tick: simTick,
+					reason: failure.reason,
+					message: failure.message,
+					transcript: failure.transcript,
+					fallbackDirective,
+				} as Omit<AgentFailedEvent, "eventId">,
+			);
 		}
 
 		return { stagedOrders };
@@ -468,6 +533,8 @@ export class SimOrchestrator {
 		entry: AgentRegistryEntry,
 		simTick: number,
 		simulatedTime: Date,
+		releasedThisTick: ResearchNote[],
+		agentEvents: AgentEvent[],
 	): Promise<{
 		decision: TradingDecision;
 		orders: StagedOrderResult[];
@@ -483,8 +550,13 @@ export class SimOrchestrator {
 			this.getReleasedNotesForAgent(entry),
 		);
 
-		const prompt = this.buildTickPrompt(entry, simTick, simulatedTime);
-		this.eventBus.emit("agent-event", {
+		const prompt = this.buildTickPrompt(
+			entry,
+			simTick,
+			simulatedTime,
+			releasedThisTick,
+		);
+		this.emitAndCollectAgentEvent(agentEvents, {
 			type: "run_started",
 			agentId: entry.config.id,
 			agentName: entry.config.name,
@@ -499,6 +571,7 @@ export class SimOrchestrator {
 				stream.fullStream,
 				entry,
 				simTick,
+				agentEvents,
 				(delta) => {
 					transcript += delta;
 				},
@@ -520,7 +593,7 @@ export class SimOrchestrator {
 					rejectionReason: placedOrder.rejectionReason,
 				}),
 			);
-			const decisionEvent: AgentDecisionEvent = {
+			const decisionEvent: Omit<AgentDecisionEvent, "eventId"> = {
 				type: "decision",
 				agentId: entry.config.id,
 				agentName: entry.config.name,
@@ -531,7 +604,7 @@ export class SimOrchestrator {
 					autopilotDirective: decision.autopilotDirective,
 				},
 			};
-			this.eventBus.emit("agent-event", decisionEvent);
+			this.emitAndCollectAgentEvent(agentEvents, decisionEvent);
 
 			const orders = decision.ordersPlaced.map((placedOrder) => ({
 				order: {
@@ -564,13 +637,16 @@ export class SimOrchestrator {
 					tick: simTick,
 				};
 
-				this.eventBus.emit("agent-event", {
-					type: "signal",
-					agentId: entry.config.id,
-					agentName: entry.config.name,
-					tick: simTick,
-					signal,
-				});
+				this.emitAndCollectAgentEvent(
+					agentEvents,
+					{
+						type: "signal",
+						agentId: entry.config.id,
+						agentName: entry.config.name,
+						tick: simTick,
+						signal,
+					} as Omit<AgentSignalEvent, "eventId">,
+				);
 			}
 
 			return { decision, orders };
@@ -615,14 +691,14 @@ export class SimOrchestrator {
 	}
 
 	private resolveStructuredOutputModel() {
-		const googleProvider = getGoogleGeminiProvider();
-		return googleProvider("gemini-3.1-flash-lite-preview");
+		return TRADING_MODEL;
 	}
 
 	private async consumeAgentThinkingStream(
 		fullStream: AsyncIterable<unknown>,
 		entry: AgentRegistryEntry,
 		simTick: number,
+		agentEvents: AgentEvent[],
 		onDelta: (delta: string) => void,
 	): Promise<void> {
 		let transcript = "";
@@ -635,14 +711,17 @@ export class SimOrchestrator {
 
 			transcript += delta;
 			onDelta(delta);
-			this.eventBus.emit("agent-event", {
-				type: "thinking_delta",
-				agentId: entry.config.id,
-				agentName: entry.config.name,
-				tick: simTick,
-				delta,
-				transcript,
-			});
+			this.emitAndCollectAgentEvent(
+				agentEvents,
+				{
+					type: "thinking_delta",
+					agentId: entry.config.id,
+					agentName: entry.config.name,
+					tick: simTick,
+					delta,
+					transcript,
+				} as Omit<AgentThinkingDeltaEvent, "eventId">,
+			);
 		}
 	}
 
@@ -684,7 +763,9 @@ export class SimOrchestrator {
 
 		if (error instanceof z.ZodError || this.isSchemaValidationError(error)) {
 			const message =
-				error instanceof Error ? error.message : "Structured output validation failed";
+				error instanceof Error
+					? error.message
+					: "Structured output validation failed";
 			return new ActiveAgentGenerationError(
 				message,
 				"schema_validation_failed",
@@ -692,7 +773,8 @@ export class SimOrchestrator {
 			);
 		}
 
-		const message = error instanceof Error ? error.message : "LLM generation failed";
+		const message =
+			error instanceof Error ? error.message : "LLM generation failed";
 		return new ActiveAgentGenerationError(message, "llm_error", transcript);
 	}
 
@@ -800,7 +882,9 @@ export class SimOrchestrator {
 				continue;
 			}
 
-			if (this.hasConflictingOrderIdentity(existingOrder.order, stagedOrder.order)) {
+			if (
+				this.hasConflictingOrderIdentity(existingOrder.order, stagedOrder.order)
+			) {
 				console.error(
 					`[SimOrchestrator] Conflicting replay for order ${stagedOrder.order.id}; discarding duplicate stage`,
 					{
@@ -895,8 +979,7 @@ export class SimOrchestrator {
 			replayedOrders.push({
 				...stagedOrder,
 				order: existingOrder,
-				reasoning:
-					stagedOrder.reasoning ?? existingOrder.llmReasoning ?? null,
+				reasoning: stagedOrder.reasoning ?? existingOrder.llmReasoning ?? null,
 			});
 		}
 
@@ -922,12 +1005,13 @@ export class SimOrchestrator {
 	private deliverReleasedResearch(
 		releasedNotes: ReturnType<PublicationBus["releaseDue"]>,
 		changedAgentIds: Set<string>,
-	): void {
+	): ReleasedResearchByAgent {
 		const notesByTier = {
 			tier1: releasedNotes.tier1,
 			tier2: releasedNotes.tier2,
 			tier3: releasedNotes.tier3,
 		} as const;
+		const deliveredByAgent: ReleasedResearchByAgent = new Map();
 
 		for (const entry of this.agentRegistry.getAll()) {
 			if (
@@ -940,6 +1024,7 @@ export class SimOrchestrator {
 
 			const tierNotes = notesByTier[entry.state.tier];
 			let inboxChanged = false;
+			const newlyDelivered: ResearchNote[] = [];
 
 			for (const note of tierNotes) {
 				if (entry.state.researchInbox.has(note.id)) {
@@ -950,13 +1035,23 @@ export class SimOrchestrator {
 					...note,
 					releasedToTier: entry.state.tier,
 				});
+				newlyDelivered.push({
+					...note,
+					releasedToTier: entry.state.tier,
+				});
 				inboxChanged = true;
+			}
+
+			if (newlyDelivered.length > 0) {
+				deliveredByAgent.set(entry.config.id, newlyDelivered);
 			}
 
 			if (inboxChanged) {
 				changedAgentIds.add(entry.config.id);
 			}
 		}
+
+		return deliveredByAgent;
 	}
 
 	private getReleasedNotesForAgent(entry: AgentRegistryEntry): ResearchNote[] {
@@ -969,8 +1064,12 @@ export class SimOrchestrator {
 		entry: AgentRegistryEntry,
 		simTick: number,
 		simulatedTime: Date,
+		releasedThisTick: ResearchNote[] = [],
 	): string {
-		const notes = this.getReleasedNotesForAgent(entry).slice(0, 3);
+		const notes = this.getReleasedNotesForPrompt(entry, releasedThisTick).slice(
+			0,
+			3,
+		);
 		const noteSummary =
 			notes.length === 0
 				? "No new research notes were released to you this tick."
@@ -988,6 +1087,30 @@ export class SimOrchestrator {
 			noteSummary,
 			"Decide whether to trade this tick. Use tools when you need market data, portfolio context, or to stage an order.",
 		].join("\n\n");
+	}
+
+	private getReleasedNotesForPrompt(
+		entry: AgentRegistryEntry,
+		releasedThisTick: ResearchNote[],
+	): ResearchNote[] {
+		const inboxNotes = this.getReleasedNotesForAgent(entry);
+		if (releasedThisTick.length === 0) {
+			return inboxNotes;
+		}
+
+		const merged = new Map<string, ResearchNote>();
+		for (const note of releasedThisTick) {
+			merged.set(note.id, note);
+		}
+		for (const note of inboxNotes) {
+			if (!merged.has(note.id)) {
+				merged.set(note.id, note);
+			}
+		}
+
+		return Array.from(merged.values()).sort(
+			(left, right) => right.publishedAtTick - left.publishedAtTick,
+		);
 	}
 
 	private buildFallbackDirective(
@@ -1027,11 +1150,20 @@ export class SimOrchestrator {
 		return Array.from(bars.values());
 	}
 
+	private queueRuntimeLog(message: string): void {
+		this.runtimeLogMessages.push(message);
+	}
+
 	private async loadPendingCommands(): Promise<CommandRow[]> {
 		return this.db
 			.select()
 			.from(commandsTable)
-			.where(eq(commandsTable.status, "pending"))
+			.where(
+				and(
+					eq(commandsTable.sessionId, this.sessionId),
+					eq(commandsTable.status, "pending"),
+				),
+			)
 			.orderBy(asc(commandsTable.id));
 	}
 
@@ -1072,6 +1204,7 @@ export class SimOrchestrator {
 							status: "processed",
 							resultMessage: "Simulation started",
 						});
+						this.queueRuntimeLog("control:start -> Simulation started");
 						break;
 					case "pause":
 						this.isRunning = false;
@@ -1080,6 +1213,7 @@ export class SimOrchestrator {
 							status: "processed",
 							resultMessage: "Simulation paused",
 						});
+						this.queueRuntimeLog("control:pause -> Simulation paused");
 						break;
 					case "step":
 						if (this.isRunning) {
@@ -1088,6 +1222,9 @@ export class SimOrchestrator {
 								status: "processed",
 								resultMessage: "Simulation already running; step ignored",
 							});
+							this.queueRuntimeLog(
+								"control:step -> Simulation already running; step ignored",
+							);
 							break;
 						}
 
@@ -1097,6 +1234,7 @@ export class SimOrchestrator {
 							status: "processed",
 							resultMessage: "Single tick step queued",
 						});
+						this.queueRuntimeLog("control:step -> Single tick step queued");
 						break;
 					case "set_speed": {
 						const speedPayload = parsedCommand.payload as {
@@ -1108,6 +1246,9 @@ export class SimOrchestrator {
 							status: "processed",
 							resultMessage: `Speed multiplier set to ${speedPayload.speedMultiplier}`,
 						});
+						this.queueRuntimeLog(
+							`control:set_speed -> Speed multiplier set to ${speedPayload.speedMultiplier}`,
+						);
 						break;
 					}
 					case "set_tick_interval": {
@@ -1120,6 +1261,9 @@ export class SimOrchestrator {
 							status: "processed",
 							resultMessage: `Tick interval set to ${intervalPayload.tickIntervalMs}ms`,
 						});
+						this.queueRuntimeLog(
+							`control:set_tick_interval -> Tick interval set to ${intervalPayload.tickIntervalMs}ms`,
+						);
 						break;
 					}
 				}
@@ -1182,9 +1326,11 @@ export class SimOrchestrator {
 		stagedOrders: StagedOrderResult[],
 		trades: Trade[],
 		bars: OHLCVBar[],
+		agentEvents: AgentEvent[],
 		commandUpdates: CommandUpdate[],
 		appliedWorldEvents: WorldEvent[],
 		changedAgentIds: Set<string>,
+		touchedSymbols: Set<string>,
 		simulatedTime: Date,
 	): Promise<void> {
 		const changedEntries = Array.from(changedAgentIds)
@@ -1192,12 +1338,26 @@ export class SimOrchestrator {
 			.filter((entry): entry is AgentRegistryEntry => entry !== undefined);
 
 		await this.db.transaction(async (tx) => {
+			if (agentEvents.length > 0) {
+				await tx.insert(agentEventsTable).values(
+					agentEvents.map((event) => ({
+						eventId: event.eventId,
+						sessionId: this.sessionId,
+						agentId: event.agentId,
+						type: event.type,
+						tick: event.tick,
+						payload: event,
+					})),
+				);
+			}
+
 			if (stagedOrders.length > 0) {
 				await tx
 					.insert(ordersTable)
 					.values(
 						stagedOrders.map(({ order, reasoning }) => ({
 							id: order.id,
+							sessionId: this.sessionId,
 							tick: order.createdAtTick,
 							agentId: order.agentId,
 							symbol: order.symbol,
@@ -1224,6 +1384,7 @@ export class SimOrchestrator {
 				await tx.insert(tradesTable).values(
 					trades.map((trade) => ({
 						id: trade.id,
+						sessionId: this.sessionId,
 						tick: trade.tick,
 						symbol: trade.symbol,
 						buyOrderId: trade.buyOrderId,
@@ -1239,6 +1400,7 @@ export class SimOrchestrator {
 			if (bars.length > 0) {
 				await tx.insert(ticksTable).values(
 					bars.map((bar) => ({
+						sessionId: this.sessionId,
 						tick: bar.tick,
 						symbol: bar.symbol,
 						open: bar.open.toNumber(),
@@ -1251,7 +1413,7 @@ export class SimOrchestrator {
 			}
 
 			for (const entry of changedEntries) {
-				const row = serializeAgentEntryForDb(entry);
+				const row = serializeAgentEntryForDb(entry, this.sessionId);
 				await tx
 					.insert(agentsTable)
 					.values({
@@ -1290,6 +1452,7 @@ export class SimOrchestrator {
 				await tx
 					.insert(worldEventsTable)
 					.values({
+						sessionId: this.sessionId,
 						eventId: worldEvent.id,
 						type: worldEvent.type,
 						source: worldEvent.source,
@@ -1333,30 +1496,73 @@ export class SimOrchestrator {
 						resultMessage: commandUpdate.resultMessage,
 						processedAt: new Date(),
 					})
-					.where(eq(commandsTable.id, commandUpdate.id));
+					.where(
+						and(
+							eq(commandsTable.sessionId, this.sessionId),
+							eq(commandsTable.id, commandUpdate.id),
+						),
+					);
+			}
+
+			for (const symbol of touchedSymbols) {
+				const snapshot = this.matchingEngine.getSnapshot(symbol);
+				const serializedSnapshot = serializeOrderBookSnapshot({
+					sessionId: this.sessionId,
+					snapshot,
+					tick: this.simClock.simTick,
+				});
+
+				await tx
+					.insert(orderBookSnapshotsTable)
+					.values(serializedSnapshot)
+					.onConflictDoUpdate({
+						target: [
+							orderBookSnapshotsTable.sessionId,
+							orderBookSnapshotsTable.symbol,
+						],
+						set: {
+							tick: serializedSnapshot.tick,
+							bids: serializedSnapshot.bids,
+							asks: serializedSnapshot.asks,
+							lastPrice: serializedSnapshot.lastPrice,
+							spread: serializedSnapshot.spread,
+							updatedAt: serializedSnapshot.updatedAt,
+						},
+					});
 			}
 
 			await tx
 				.insert(simConfigTable)
 				.values({
-					id: SIM_CONFIG_ROW_ID,
+					sessionId: this.sessionId,
 					isRunning: this.isRunning,
 					currentTick: this.simClock.simTick,
 					simulatedMarketTime: simulatedTime,
 					speedMultiplier: this.speedMultiplier,
 					tickIntervalMs: this.tickIntervalMs,
+					lastSummary: this.lastSummary,
 				})
 				.onConflictDoUpdate({
-					target: simConfigTable.id,
+					target: simConfigTable.sessionId,
 					set: {
 						isRunning: this.isRunning,
 						currentTick: this.simClock.simTick,
 						simulatedMarketTime: simulatedTime,
 						speedMultiplier: this.speedMultiplier,
 						tickIntervalMs: this.tickIntervalMs,
+						lastSummary: this.lastSummary,
 						updatedAt: new Date(),
 					},
 				});
+
+			await tx
+				.update(simulationSessionsTable)
+				.set({
+					status: "active",
+					updatedAt: new Date(),
+					endedAt: null,
+				})
+				.where(eq(simulationSessionsTable.id, this.sessionId));
 		});
 	}
 
@@ -1366,24 +1572,48 @@ export class SimOrchestrator {
 		await this.db
 			.insert(simConfigTable)
 			.values({
-				id: SIM_CONFIG_ROW_ID,
+				sessionId: this.sessionId,
 				isRunning: this.isRunning,
 				currentTick: this.simClock.simTick,
 				simulatedMarketTime: simulatedTime,
 				speedMultiplier: this.speedMultiplier,
 				tickIntervalMs: this.tickIntervalMs,
+				lastSummary: this.lastSummary,
 			})
 			.onConflictDoUpdate({
-				target: simConfigTable.id,
+				target: simConfigTable.sessionId,
 				set: {
 					isRunning: this.isRunning,
 					currentTick: this.simClock.simTick,
 					simulatedMarketTime: simulatedTime,
 					speedMultiplier: this.speedMultiplier,
 					tickIntervalMs: this.tickIntervalMs,
+					lastSummary: this.lastSummary,
 					updatedAt: new Date(),
 				},
 			});
+
+		await this.db
+			.update(simulationSessionsTable)
+			.set({
+				status: "active",
+				updatedAt: new Date(),
+				endedAt: null,
+			})
+			.where(eq(simulationSessionsTable.id, this.sessionId));
+	}
+
+	private emitAndCollectAgentEvent(
+		agentEvents: AgentEvent[],
+		event: Omit<AgentEvent, "eventId">,
+	): AgentEvent {
+		const nextEvent = {
+			...event,
+			eventId: `${this.sessionId}:agent-event:${this.agentEventSequence++}`,
+		} as AgentEvent;
+		agentEvents.push(nextEvent);
+		this.eventBus.emit("agent-event", nextEvent);
+		return nextEvent;
 	}
 
 	private buildRuntimeState(activeGroupSize?: number): SimRuntimeState {

@@ -14,6 +14,14 @@ export const envSchema = z.object({
 
 	ANTHROPIC_API_KEY: z.string().optional(),
 	FIRECRAWL_API_KEY: z.string().optional(),
+	FIRECRAWL_MOCK_MODE: z.string().optional(),
+	ALPACA_BASE_URL: z.string().optional(),
+	ALPACA_API_KEY: z.string().optional(),
+	ALPACA_API_SECRET: z.string().optional(),
+	SIM_MAX_LIVE_SESSIONS: z.string().optional(),
+});
+
+export const alpacaEnvSchema = z.object({
 	ALPACA_BASE_URL: z.string(),
 	ALPACA_API_KEY: z.string(),
 	ALPACA_API_SECRET: z.string(),
@@ -25,6 +33,7 @@ export const googleGenerativeAIEnvSchema = envSchema.pick({
 
 export type Env = z.infer<typeof envSchema>;
 export type GoogleGenerativeAIEnv = z.infer<typeof googleGenerativeAIEnvSchema>;
+export type AlpacaEnv = z.infer<typeof alpacaEnvSchema>;
 
 let cachedEnv: Env | undefined;
 
@@ -53,4 +62,16 @@ export function getGoogleGenerativeAIEnv(
 	input: NodeJS.ProcessEnv = process.env,
 ): GoogleGenerativeAIEnv {
 	return googleGenerativeAIEnvSchema.parse(input);
+}
+
+export function hasAlpacaEnv(
+	input: NodeJS.ProcessEnv = process.env,
+): boolean {
+	return alpacaEnvSchema.safeParse(input).success;
+}
+
+export function getAlpacaEnv(
+	input: NodeJS.ProcessEnv = process.env,
+): AlpacaEnv {
+	return alpacaEnvSchema.parse(input);
 }

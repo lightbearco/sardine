@@ -39,7 +39,7 @@ export function SignalFeed() {
 								: event.decision.reasoning;
 							return (
 								<article
-									key={`${event.agentId}-${event.tick}-${index}`}
+									key={event.eventId ?? `${event.agentId}-${event.tick}-${index}`}
 									className="rounded-lg border border-[var(--terminal-border)] bg-[var(--terminal-bg)] p-3"
 								>
 									<div className="flex items-start justify-between gap-3">

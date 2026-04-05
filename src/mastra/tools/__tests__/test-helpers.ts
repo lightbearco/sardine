@@ -3,6 +3,7 @@ import { isValidationError, type ValidationError } from "@mastra/core/tools";
 import Decimal from "decimal.js";
 import { AgentRegistry } from "#/agents/AgentRegistry";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
+import { TRADING_MODEL } from "#/mastra/models";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import type { AgentConfig, AgentState, Position } from "#/types/agent";
 import type { Order } from "#/types/market";
@@ -37,7 +38,7 @@ export function makeTestConfig(
 		sectors: ["Technology"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 0,
 		decisionParams: {
 			maxPositionPct: 0.2,

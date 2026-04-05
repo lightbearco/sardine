@@ -8,6 +8,34 @@
       "when": 1775336487110,
       "tag": "0000_productive_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775368705365,
+      "tag": "0001_dry_texas_twister",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775371175449,
+      "tag": "0002_curvy_korath",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775372933421,
+      "tag": "0003_mighty_the_captain",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775382600000,
+      "tag": "0004_sharp_sentinels",
+      "breakpoints": true
     }
   ]
 }

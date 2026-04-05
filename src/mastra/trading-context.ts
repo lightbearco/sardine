@@ -10,6 +10,7 @@ export type TradingModelTier = "sonnet" | "haiku";
 export type TradingRequestContextValues = {
 	"agent-id": string;
 	"agent-name": string;
+	"simulation-session-id"?: string;
 	"entity-type": string;
 	tier: AgentTier;
 	strategy: string;

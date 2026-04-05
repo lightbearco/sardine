@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { RequestContext } from "@mastra/core/request-context";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { portfolioTool } from "#/mastra/tools/portfolioTool";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import { createToolHarness, unwrapToolResult } from "./test-helpers";
@@ -38,7 +39,8 @@ describe("portfolioTool", () => {
 			await portfolioTool.execute?.({}, { requestContext }),
 		);
 
-		expect(portfolioTool.outputSchema.parse(result)).toBeDefined();
+		const outputSchema = portfolioTool.outputSchema as z.ZodTypeAny;
+		expect(outputSchema.parse(result)).toBeDefined();
 		expect(result.agentId).toBe("agent-1");
 		expect(result.capital).toBe("100000");
 		expect(result.totalPnl).toBe("1000");

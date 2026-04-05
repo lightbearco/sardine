@@ -7,6 +7,12 @@ import {
 	type Sector,
 	SIM_DEFAULTS,
 } from "#/lib/constants";
+import {
+	buildDefaultTraderDistribution,
+	type TraderDistribution,
+} from "#/lib/simulation-session";
+import { TRADING_MODEL } from "#/mastra/models";
+import type { ResearchRequestContextValues } from "#/mastra/research-context";
 import type {
 	TradingModelTier,
 	TradingRequestContextValues,
@@ -16,6 +22,7 @@ import type {
 	AgentState,
 	AutopilotDirective,
 } from "#/types/agent";
+import type { ResearchFocus } from "#/types/research";
 import { AgentRegistry } from "./AgentRegistry";
 
 type Category =
@@ -27,10 +34,63 @@ type Category =
 	| "noise"
 	| "depth-provider";
 
+type DistributionCategory = keyof TraderDistribution;
+
 type AgentSeedConfig = Omit<AgentConfig, "llmGroup">;
 
-const TIER1_MODEL = "google/gemini-3.1-flash-lite-preview";
-const DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview";
+export interface ResearchAgentWorker {
+	id: string;
+	name: string;
+	focus: ResearchFocus;
+	persona: string;
+	sources: string[];
+	requestContext: RequestContext<ResearchRequestContextValues>;
+}
+
+const RESEARCH_AGENT_BLUEPRINTS: readonly Omit<
+	ResearchAgentWorker,
+	"requestContext"
+>[] = [
+	{
+		id: "research-news",
+		name: "Research News Desk",
+		focus: "news",
+		persona:
+			"You are a fast-moving equity news analyst. You scan company headlines for earnings surprises, guidance changes, analyst actions, and product-cycle updates that could move large-cap US equities intraday.",
+		sources: [
+			"https://www.cnbc.com/markets/",
+			"https://www.reuters.com/markets/us/",
+			"https://www.marketwatch.com/markets",
+		],
+	},
+	{
+		id: "research-sentiment",
+		name: "Research Sentiment Desk",
+		focus: "sentiment",
+		persona:
+			"You are a market sentiment analyst. You focus on positioning, narrative shifts, and cross-asset risk appetite, translating soft crowd signals into concise trading-facing research notes.",
+		sources: [
+			"https://www.wsj.com/finance",
+			"https://www.bloomberg.com/markets",
+			"https://www.investing.com/news/stock-market-news",
+		],
+	},
+	{
+		id: "research-macro",
+		name: "Research Macro Desk",
+		focus: "macro",
+		persona:
+			"You are a macro research analyst. You track the Fed, rates, inflation, labor data, and sector-sensitive policy signals, then explain which symbols and sectors should care.",
+		sources: [
+			"https://www.federalreserve.gov/newsevents.htm",
+			"https://www.cmegroup.com/markets/interest-rates.html",
+			"https://www.bls.gov/news.release/",
+		],
+	},
+] as const;
+
+const TIER1_MODEL = TRADING_MODEL;
+const DEFAULT_MODEL = TRADING_MODEL;
 
 const CATEGORY_ORDER: readonly Category[] = [
 	"hedge-fund",
@@ -42,14 +102,18 @@ const CATEGORY_ORDER: readonly Category[] = [
 	"depth-provider",
 ];
 
-const CATEGORY_WEIGHTS: Record<Category, number> = {
-	"hedge-fund": 3,
-	"market-maker": 3,
-	pension: 2,
-	momentum: 15,
-	value: 10,
-	noise: 10,
-	"depth-provider": 5,
+const DISTRIBUTION_TO_CATEGORY: Record<
+	DistributionCategory,
+	Category | "tier1"
+> = {
+	tier1: "tier1",
+	hedgeFund: "hedge-fund",
+	marketMaker: "market-maker",
+	pension: "pension",
+	momentum: "momentum",
+	value: "value",
+	noise: "noise",
+	depthProvider: "depth-provider",
 };
 
 const TIER3_ARCHETYPES = {
@@ -237,53 +301,6 @@ function createSeededRandom(seed: number) {
 			return result;
 		},
 	};
-}
-
-function allocateCategoryCounts(total: number): Record<Category, number> {
-	const result = Object.fromEntries(
-		CATEGORY_ORDER.map((category) => [category, 0]),
-	) as Record<Category, number>;
-
-	if (total <= 0) {
-		return result;
-	}
-
-	const totalWeight = CATEGORY_ORDER.reduce(
-		(sum, category) => sum + CATEGORY_WEIGHTS[category],
-		0,
-	);
-	const provisional = CATEGORY_ORDER.map((category) => {
-		const raw = (total * CATEGORY_WEIGHTS[category]) / totalWeight;
-		const whole = Math.floor(raw);
-		return {
-			category,
-			whole,
-			remainder: raw - whole,
-		};
-	});
-
-	let assigned = 0;
-	for (const entry of provisional) {
-		result[entry.category] = entry.whole;
-		assigned += entry.whole;
-	}
-
-	const remaining = total - assigned;
-	const remainderWinners = [...provisional].sort((left, right) => {
-		if (right.remainder !== left.remainder) {
-			return right.remainder - left.remainder;
-		}
-		return (
-			CATEGORY_ORDER.indexOf(left.category) -
-			CATEGORY_ORDER.indexOf(right.category)
-		);
-	});
-
-	for (let index = 0; index < remaining; index += 1) {
-		result[remainderWinners[index % remainderWinners.length].category] += 1;
-	}
-
-	return result;
 }
 
 function clampSectorCount(count: number): number {
@@ -913,9 +930,24 @@ function assignGroups(
 	}));
 }
 
+function normalizeTraderDistribution(
+	count: number,
+	distribution?: TraderDistribution,
+): TraderDistribution {
+	if (!distribution) {
+		return buildDefaultTraderDistribution(count);
+	}
+
+	return distribution;
+}
+
 export function generateAgentConfigs(
 	seed: number,
 	count: number,
+	options: {
+		groupCount?: number;
+		traderDistribution?: TraderDistribution;
+	} = {},
 ): AgentConfig[] {
 	if (count <= 0) {
 		return [];
@@ -924,43 +956,51 @@ export function generateAgentConfigs(
 	const rng = createSeededRandom(seed);
 	const namedAgents = buildNamedAgents();
 	const configs: AgentSeedConfig[] = [];
+	const groupCount = options.groupCount ?? SIM_DEFAULTS.groupCount;
+	const traderDistribution = normalizeTraderDistribution(
+		count,
+		options.traderDistribution,
+	);
 
-	const tier1Target = Math.min(count, namedAgents.tier1.length);
+	const tier1Target = Math.min(
+		count,
+		namedAgents.tier1.length,
+		traderDistribution.tier1,
+	);
 	configs.push(...namedAgents.tier1.slice(0, tier1Target));
 
-	const remaining = count - configs.length;
-	if (remaining > 0) {
-		const categoryCounts = allocateCategoryCounts(remaining);
+	for (const category of CATEGORY_ORDER) {
+		const distributionKey = (Object.entries(DISTRIBUTION_TO_CATEGORY).find(
+			([, value]) => value === category,
+		)?.[0] ?? null) as Exclude<DistributionCategory, "tier1"> | null;
+		const targetCount =
+			distributionKey === null ? 0 : traderDistribution[distributionKey];
 
-		for (const category of CATEGORY_ORDER) {
-			const targetCount = categoryCounts[category];
+		if (targetCount === 0) {
+			continue;
+		}
 
-			if (targetCount === 0) {
-				continue;
+		if (
+			category === "hedge-fund" ||
+			category === "market-maker" ||
+			category === "pension"
+		) {
+			const namedForCategory = namedAgents[category];
+			const namedCount = Math.min(targetCount, namedForCategory.length);
+			configs.push(...namedForCategory.slice(0, namedCount));
+
+			for (let index = namedCount + 1; index <= targetCount; index += 1) {
+				configs.push(buildTier2Procedural(category, index, rng));
 			}
+			continue;
+		}
 
-			if (
-				category === "hedge-fund" ||
-				category === "market-maker" ||
-				category === "pension"
-			) {
-				const namedForCategory = namedAgents[category];
-				const namedCount = Math.min(targetCount, namedForCategory.length);
-				configs.push(...namedForCategory.slice(0, namedCount));
-
-				for (let index = namedCount + 1; index <= targetCount; index += 1) {
-					configs.push(buildTier2Procedural(category, index, rng));
-				}
-				continue;
-			}
-
-			for (let index = 1; index <= targetCount; index += 1) {
-				configs.push(buildTier3Agent(category, index, rng));
-			}
+		for (let index = 1; index <= targetCount; index += 1) {
+			configs.push(buildTier3Agent(category, index, rng));
 		}
 	}
 
-	return assignGroups(configs.slice(0, count), SIM_DEFAULTS.groupCount);
+	return assignGroups(configs.slice(0, count), groupCount);
 }
 
 /**
@@ -1081,4 +1121,20 @@ export function spawnAgents(
 	}
 
 	return registry;
+}
+
+export function spawnResearchAgents(): ResearchAgentWorker[] {
+	return RESEARCH_AGENT_BLUEPRINTS.map((blueprint) => {
+		const requestContext = new RequestContext<ResearchRequestContextValues>();
+		requestContext.set("agent-id", blueprint.id);
+		requestContext.set("agent-name", blueprint.name);
+		requestContext.set("research-focus", blueprint.focus);
+		requestContext.set("sources", [...blueprint.sources]);
+		requestContext.set("persona", blueprint.persona);
+
+		return {
+			...blueprint,
+			requestContext,
+		};
+	});
 }

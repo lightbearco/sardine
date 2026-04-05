@@ -125,8 +125,8 @@ export class AgentRegistry {
 		this.entries.clear();
 	}
 
-	toPersistenceRows() {
-		return serializeAgentEntriesForDb(this.getAll());
+	toPersistenceRows(sessionId: string) {
+		return serializeAgentEntriesForDb(this.getAll(), sessionId);
 	}
 
 	private serializeConfig(config: AgentConfig): AgentConfig {

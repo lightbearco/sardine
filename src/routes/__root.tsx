@@ -4,6 +4,7 @@ import {
 	createRootRouteWithContext,
 	HeadContent,
 	Scripts,
+	useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import Footer from "../components/Footer";
@@ -47,6 +48,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+	const pathname = useRouterState({ select: (s) => s.location.pathname });
+	const isTerminal = pathname.startsWith("/dashboard/");
+
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>
@@ -54,11 +58,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			</head>
 			<body className="dark min-h-screen font-sans antialiased [overflow-wrap:anywhere] selection:bg-primary/20 selection:text-foreground">
 				<TooltipProvider>
-					<Header />
+					{!isTerminal && <Header />}
 					<SimWebSocketProvider>
-						<div className="min-h-[calc(100vh-9rem)]">{children}</div>
+						{isTerminal ? children : <div className="min-h-[calc(100vh-9rem)]">{children}</div>}
 					</SimWebSocketProvider>
-					<Footer />
+					{!isTerminal && <Footer />}
 				</TooltipProvider>
 				<TanStackDevtools
 					config={{

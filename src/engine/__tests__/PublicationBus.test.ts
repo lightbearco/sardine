@@ -12,6 +12,7 @@ function makeNote(id: string, publishedAtTick: number): ResearchNote {
 		sentiment: "bullish",
 		confidence: 0.8,
 		symbols: ["AAPL"],
+		sources: ["https://example.com/story"],
 		publishedAtTick,
 		releasedToTier: "research",
 	};

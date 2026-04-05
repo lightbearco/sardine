@@ -47,8 +47,10 @@ function serializeModelId(model: AgentRegistryEntry["config"]["model"]): string 
 
 export function serializeAgentEntryForDb(
 	entry: AgentRegistryEntry,
+	sessionId: string,
 ): Pick<
 	AgentRecord,
+	| "sessionId"
 	| "id"
 	| "name"
 	| "tier"
@@ -68,6 +70,7 @@ export function serializeAgentEntryForDb(
 	| "llmGroup"
 > {
 	return {
+		sessionId,
 		id: entry.config.id,
 		name: entry.config.name,
 		tier: entry.config.tier,
@@ -92,6 +95,7 @@ export function serializeAgentEntryForDb(
 
 export function serializeAgentEntriesForDb(
 	entries: Iterable<AgentRegistryEntry>,
+	sessionId: string,
 ): ReturnType<typeof serializeAgentEntryForDb>[] {
-	return Array.from(entries, (entry) => serializeAgentEntryForDb(entry));
+	return Array.from(entries, (entry) => serializeAgentEntryForDb(entry, sessionId));
 }

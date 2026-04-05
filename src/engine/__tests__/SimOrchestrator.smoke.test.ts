@@ -18,6 +18,7 @@ import { SimClock } from "#/engine/sim/SimClock";
 import { SimOrchestrator } from "#/engine/sim/SimOrchestrator";
 import { tradingAgent } from "#/mastra/agents/trading-agent";
 import { hasGoogleGenerativeAIEnv } from "#/mastra/google-gemini";
+import { TRADING_MODEL } from "#/mastra/models";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import type {
 	AgentConfig,
@@ -59,7 +60,7 @@ function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		sectors: ["Technology"],
 		risk: 0.45,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 1,
 		decisionParams: {},
 		...overrides,
@@ -94,6 +95,7 @@ function makeResearchNote(id: string, publishedAtTick: number): ResearchNote {
 		sentiment: "bearish",
 		confidence: 0.74,
 		symbols: ["AAPL"],
+		sources: ["https://example.com/macro"],
 		publishedAtTick,
 		releasedToTier: "research",
 	};
@@ -258,13 +260,13 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-1", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-3.1-flash-lite-preview",
+					model: TRADING_MODEL,
 				},
 			});
 			const inactiveEntry = registerAgent(registry, "inactive-autopilot-1", {
 				config: {
 					llmGroup: 1,
-					model: "google/gemini-3.1-flash-lite-preview",
+					model: TRADING_MODEL,
 				},
 				state: {
 					positions: new Map([
@@ -426,7 +428,7 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-repeat", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-3.1-flash-lite-preview",
+					model: TRADING_MODEL,
 				},
 			});
 			registerAgent(registry, "market-maker-seed");
@@ -511,7 +513,7 @@ describe("SimOrchestrator smoke", () => {
 			const activeEntry = registerAgent(registry, "live-agent-timeout", {
 				config: {
 					llmGroup: 0,
-					model: "google/gemini-3.1-flash-lite-preview",
+					model: TRADING_MODEL,
 				},
 				state: {
 					positions: new Map([

@@ -1,6 +1,21 @@
 import { z } from "zod";
-import type { Order, OrderSide, OrderStatus, OrderType, Trade } from "#/types/market";
-import type { AutopilotDirective } from "#/types/agent";
+import type {
+	LOBSnapshotData,
+	OHLCVBarData,
+	Order,
+	OrderSide,
+	OrderStatus,
+	OrderType,
+	Trade,
+	TradeData,
+} from "#/types/market";
+import type {
+	AgentStatus,
+	AgentTier,
+	AutopilotDirective,
+} from "#/types/agent";
+import type { ResearchNote } from "#/types/research";
+import type { TraderDistribution } from "#/lib/simulation-session";
 
 // ── Sim Config ──
 
@@ -27,6 +42,94 @@ export interface SimRuntimeState {
 	symbolCount: number;
 	agentCount: number;
 	lastSummary: TickSummary | null;
+}
+
+export interface TickSummaryData {
+	durationMs: number;
+	orderCount: number;
+	tradeCount: number;
+	activeAgents: number;
+	simTick: number;
+	simulatedTime: Date;
+	trades: TradeData[];
+	isRunning: boolean;
+}
+
+export interface SimRuntimeStateData {
+	isRunning: boolean;
+	isTicking: boolean;
+	simTick: number;
+	simulatedTime: Date;
+	activeGroupIndex: number;
+	speedMultiplier: number;
+	tickIntervalMs: number;
+	activeGroupSize: number;
+	symbolCount: number;
+	agentCount: number;
+	lastSummary: TickSummaryData | null;
+}
+
+export type SimulationSessionStatus =
+	| "pending"
+	| "active"
+	| "completed"
+	| "failed";
+
+export interface SimulationSessionSummary {
+	id: string;
+	name: string;
+	status: SimulationSessionStatus;
+	symbols: string[];
+	seed: number;
+	agentCount: number;
+	groupCount: number;
+	tickIntervalMs: number;
+	simulatedTickDuration: number;
+	traderDistribution: TraderDistribution;
+	currentTick: number;
+	createdAt: Date | null;
+	updatedAt: Date | null;
+	startedAt: Date | null;
+	endedAt: Date | null;
+}
+
+export interface SessionWatchlistEntry {
+	lastBar: OHLCVBarData | null;
+	snapshot: LOBSnapshotData | null;
+}
+
+export interface SessionDashboardHydration {
+	session: SimulationSessionSummary;
+	symbol: string;
+	isLive: boolean;
+	simState: SimRuntimeStateData | null;
+	watchlist: Record<string, SessionWatchlistEntry>;
+	bars: OHLCVBarData[];
+	snapshot: LOBSnapshotData | null;
+	trades: TradeData[];
+	researchNotes: ResearchNote[];
+	agentRoster: SessionAgentRosterEntry[];
+	agentEvents: AgentEvent[];
+}
+
+export interface SessionAgentPosition {
+	qty: number;
+	avgCost: number;
+}
+
+export interface SessionAgentRosterEntry {
+	id: string;
+	name: string;
+	tier: AgentTier;
+	status: AgentStatus;
+	entityType: string;
+	strategyType: string;
+	currentCash: number;
+	currentNav: number;
+	positions: Record<string, SessionAgentPosition>;
+	lastAutopilotDirective: AutopilotDirective | null;
+	lastLlmAt: Date | null;
+	llmGroup: number;
 }
 
 // ── World Events ──
@@ -155,6 +258,7 @@ export interface AgentDecisionOrder {
 }
 
 interface AgentEventBase {
+	eventId: string;
 	agentId: string;
 	agentName: string;
 	tick: number;

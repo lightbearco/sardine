@@ -1,18 +1,22 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMarketData } from "#/hooks/useMarketData";
 import { useOrderBook } from "#/hooks/useOrderBook";
+import { useSessionDashboard } from "#/hooks/useSessionDashboard";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
-import { DEV_TICKERS, type TickerConfig } from "#/lib/constants";
+import { DEV_TICKERS } from "#/lib/constants";
+import type { TickerConfig } from "#/lib/constants";
 
-function formatPrice(value: unknown) {
-	const parsed = Number(value);
-	return Number.isNaN(parsed)
-		? "—"
-		: new Intl.NumberFormat("en-US", {
-				minimumFractionDigits: 2,
-				maximumFractionDigits: 2,
-			}).format(parsed);
+
+function fmt(value: unknown) {
+	const n = Number(value);
+	return Number.isNaN(n) ? "—" : n.toFixed(2);
+}
+
+function fmtVol(value: number) {
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+	return String(value);
 }
 
 const WatchlistRow = memo(function WatchlistRow({
@@ -26,45 +30,49 @@ const WatchlistRow = memo(function WatchlistRow({
 }) {
 	const { lastBar } = useMarketData(ticker.symbol);
 	const { snapshot } = useOrderBook(ticker.symbol);
-	const open = lastBar ? Number(lastBar.open) : null;
-	const close = lastBar ? Number(lastBar.close) : null;
-	const changePct =
-		open && close ? (((close - open) / open) * 100).toFixed(2) : "—";
-	const spread = snapshot?.spread ? formatPrice(snapshot.spread) : "—";
+	const open = lastBar ? lastBar.open : null;
+	const close = lastBar ? lastBar.close : null;
+	const changePct = open && close && open > 0 ? ((close - open) / open) * 100 : null;
+	const positive = changePct !== null && changePct >= 0;
+	const lastPrice = snapshot?.lastPrice ?? close;
 
 	return (
 		<button
 			type="button"
 			onClick={() => onSelect(ticker.symbol)}
-			className={`grid  w-full grid-cols-[64px_1fr_64px_72px_64px] gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
-				selected
-					? "bg-accent text-accent-foreground"
-					: "text-[var(--terminal-text)] hover:bg-white/5"
+			className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+				selected ? "bg-accent text-accent-foreground" : "text-[var(--terminal-text)] hover:bg-white/5"
 			}`}
 		>
-			<div className="font-semibold">{ticker.symbol}</div>
-			<div className="truncate">
-				{formatPrice(snapshot?.lastPrice ?? close)}
+			{/* Row 1: symbol + price + change */}
+			<div className="flex items-center justify-between gap-1">
+				<span className="font-semibold">{ticker.symbol}</span>
+				<span className="font-mono tabular-nums">{fmt(lastPrice)}</span>
+				<span
+					className="w-14 text-right tabular-nums text-[11px] font-semibold"
+					style={{
+						color: changePct === null
+							? "var(--terminal-text-muted)"
+							: positive
+								? "var(--terminal-green)"
+								: "var(--terminal-red)",
+					}}
+				>
+					{changePct === null ? "—" : `${positive ? "+" : ""}${changePct.toFixed(2)}%`}
+				</span>
 			</div>
-			<div
-				className={
-					changePct === "—"
-						? "text-[var(--terminal-text-muted)]"
-						: Number(changePct) >= 0
-							? "text-[var(--terminal-green)]"
-							: "text-[var(--terminal-red)]"
-				}
-			>
-				{changePct === "—" ? changePct : `${changePct}%`}
+			{/* Row 2: H/L + volume + spread */}
+			<div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] text-[var(--terminal-text-muted)]">
+				<span>
+					{lastBar
+						? <><span style={{ color: "var(--terminal-green)" }}>{fmt(lastBar.high)}</span>
+							{" / "}
+							<span style={{ color: "var(--terminal-red)" }}>{fmt(lastBar.low)}</span></>
+						: "— / —"}
+				</span>
+				<span>{lastBar ? fmtVol(lastBar.volume) : "—"}</span>
+				<span>spd {fmt(snapshot?.spread)}</span>
 			</div>
-			<div className="text-[var(--terminal-text-muted)]">
-				{lastBar?.volume
-					? new Intl.NumberFormat("en-US", {
-							maximumFractionDigits: 0,
-						}).format(lastBar.volume)
-					: "—"}
-			</div>
-			<div className="text-[var(--terminal-text-muted)]">{spread}</div>
 		</button>
 	);
 });
@@ -72,35 +80,41 @@ const WatchlistRow = memo(function WatchlistRow({
 export function Watchlist() {
 	const parentRef = useRef<HTMLDivElement | null>(null);
 	const { symbol, setSymbol } = useSymbolSelection();
+	const { session } = useSessionDashboard();
+	const tickers = session.symbols
+		.map(
+			(sessionSymbol) =>
+				DEV_TICKERS.find((ticker) => ticker.symbol === sessionSymbol) ?? {
+					symbol: sessionSymbol,
+					name: sessionSymbol,
+				},
+		)
+		.filter((ticker): ticker is TickerConfig => ticker !== undefined);
 	const rowVirtualizer = useVirtualizer({
-		count: DEV_TICKERS.length,
+		count: tickers.length,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => 36,
+		estimateSize: () => 48,
 		overscan: 5,
 	});
 
 	return (
-		<section className="flex h-full min-h-0 flex-col rounded-xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)]">
-			<div className="border-b border-[var(--terminal-border)] px-4 py-3">
-				<div className="text-sm font-semibold text-[var(--terminal-text)]">
-					Watchlist
-				</div>
-				<div className="text-[11px] text-[var(--terminal-text-muted)]">
-					Last / Change / Volume / Spread
-				</div>
+		<section className="flex h-full min-h-0 flex-col rounded-xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)] overflow-hidden">
+			<div className="flex items-center justify-between border-b border-[var(--terminal-border)] px-3 py-2 shrink-0">
+				<span className="text-xs font-semibold text-[var(--terminal-text)]">Watchlist</span>
+				<span className="text-[10px] text-[var(--terminal-text-muted)]">{tickers.length} symbols</span>
 			</div>
-			<div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
-				<div
-					className="relative w-full"
-					style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-				>
+			<div ref={parentRef} className="min-h-0 flex-1 overflow-auto px-2 py-1">
+				<div className="relative w-full" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
 					{rowVirtualizer.getVirtualItems().map((virtualItem) => {
-						const ticker = DEV_TICKERS[virtualItem.index];
+						const ticker = tickers[virtualItem.index];
+						if (!ticker) {
+							return null;
+						}
 						return (
 							<div
 								key={ticker.symbol}
-								className="absolute inset-x-0 top-0 p-2"
-								style={{ transform: `translateY(${virtualItem.start}px)` }}
+								className="absolute inset-x-0 top-0"
+								style={{ transform: `translateY(${virtualItem.start}px)`, height: virtualItem.size }}
 							>
 								<WatchlistRow
 									ticker={ticker}

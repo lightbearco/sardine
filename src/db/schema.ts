@@ -8,9 +8,12 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
   bigint,
   varchar,
 } from "drizzle-orm/pg-core";
+import type { AgentEvent, TickSummary } from "#/types/sim";
+import type { TraderDistribution } from "#/lib/simulation-session";
 
 // ── Enums ──
 
@@ -52,15 +55,61 @@ export const commandStatusEnum = pgEnum("command_status", [
   "rejected",
 ]);
 
+export const simulationSessionStatusEnum = pgEnum(
+  "simulation_session_status",
+  ["pending", "active", "completed", "failed"]
+);
+
 // ── Tables ──
+
+export const simulationSessions = pgTable(
+  "simulation_sessions",
+  {
+    id: varchar("id", { length: 128 }).primaryKey(),
+    name: text("name").notNull(),
+    status: simulationSessionStatusEnum("status").notNull().default("pending"),
+    symbols: jsonb("symbols").$type<string[]>().notNull().default([]),
+    seed: integer("seed").notNull().default(42),
+    agentCount: integer("agent_count").notNull().default(50),
+    groupCount: integer("group_count").notNull().default(10),
+    tickIntervalMs: integer("tick_interval_ms").notNull().default(1000),
+    simulatedTickDuration: integer("simulated_tick_duration").notNull().default(5),
+    traderDistribution: jsonb("trader_distribution")
+      .$type<TraderDistribution>()
+      .notNull()
+      .default({
+        tier1: 2,
+        hedgeFund: 3,
+        marketMaker: 3,
+        pension: 2,
+        momentum: 15,
+        value: 10,
+        noise: 10,
+        depthProvider: 5,
+      }),
+    startedAt: timestamp("started_at"),
+    endedAt: timestamp("ended_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("simulation_sessions_status_idx").on(table.status),
+    index("simulation_sessions_updated_at_idx").on(table.updatedAt),
+  ]
+);
 
 export const simConfig = pgTable("sim_config", {
   id: integer("id").primaryKey().generatedByDefaultAsIdentity(),
+  sessionId: varchar("session_id", { length: 128 })
+    .notNull()
+    .references(() => simulationSessions.id)
+    .unique(),
   isRunning: boolean("is_running").notNull().default(false),
   currentTick: integer("current_tick").notNull().default(0),
   simulatedMarketTime: timestamp("simulated_market_time"),
   speedMultiplier: real("speed_multiplier").notNull().default(1),
   tickIntervalMs: integer("tick_interval_ms").notNull().default(0),
+  lastSummary: jsonb("last_summary").$type<TickSummary | null>(),
   seed: integer("seed").notNull().default(42),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -70,6 +119,9 @@ export const agents = pgTable(
   "agents",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     name: text("name").notNull(),
     tier: agentTierEnum("tier").notNull(),
     status: agentStatusEnum("status").notNull().default("active"),
@@ -92,6 +144,7 @@ export const agents = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("agents_session_id_idx").on(table.sessionId),
     index("agents_tier_idx").on(table.tier),
     index("agents_llm_group_idx").on(table.llmGroup),
     index("agents_status_idx").on(table.status),
@@ -121,6 +174,9 @@ export const orders = pgTable(
   "orders",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     tick: integer("tick").notNull(),
     agentId: varchar("agent_id", { length: 128 })
       .notNull()
@@ -136,6 +192,7 @@ export const orders = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("orders_session_id_idx").on(table.sessionId),
     index("orders_tick_idx").on(table.tick),
     index("orders_agent_id_idx").on(table.agentId),
     index("orders_symbol_idx").on(table.symbol),
@@ -147,6 +204,9 @@ export const trades = pgTable(
   "trades",
   {
     id: varchar("id", { length: 128 }).primaryKey(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     tick: integer("tick").notNull(),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     buyOrderId: varchar("buy_order_id", { length: 128 })
@@ -166,6 +226,7 @@ export const trades = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("trades_session_id_idx").on(table.sessionId),
     index("trades_tick_idx").on(table.tick),
     index("trades_symbol_idx").on(table.symbol),
     index("trades_buyer_idx").on(table.buyerAgentId),
@@ -177,6 +238,9 @@ export const ticks = pgTable(
   "ticks",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     tick: integer("tick").notNull(),
     symbol: varchar("symbol", { length: 10 }).notNull(),
     open: real("open").notNull(),
@@ -187,6 +251,7 @@ export const ticks = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("ticks_session_id_idx").on(table.sessionId),
     index("ticks_tick_idx").on(table.tick),
     index("ticks_symbol_idx").on(table.symbol),
     index("ticks_tick_symbol_idx").on(table.tick, table.symbol),
@@ -197,19 +262,27 @@ export const researchNotes = pgTable(
   "research_notes",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-    tick: integer("tick").notNull(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
+    noteId: varchar("note_id", { length: 128 }).notNull().unique(),
+    publishedAtTick: integer("published_at_tick").notNull(),
     agentId: varchar("agent_id", { length: 128 })
       .notNull()
       .references(() => agents.id),
-    title: text("title").notNull(),
-    content: text("content").notNull(),
-    sentiment: sentimentEnum("sentiment"),
-    symbols: jsonb("symbols").$type<string[]>(),
-    releaseTick: integer("release_tick"),
+    focus: text("focus").notNull(),
+    headline: text("headline").notNull(),
+    body: text("body").notNull(),
+    sentiment: sentimentEnum("sentiment").notNull(),
+    confidence: real("confidence").notNull().default(0),
+    symbols: jsonb("symbols").$type<string[]>().notNull().default([]),
+    sources: jsonb("sources").$type<string[]>().notNull().default([]),
+    releasedToTier: agentTierEnum("released_to_tier").notNull().default("research"),
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
-    index("research_notes_tick_idx").on(table.tick),
+    index("research_notes_session_id_idx").on(table.sessionId),
+    index("research_notes_tick_idx").on(table.publishedAtTick),
     index("research_notes_agent_id_idx").on(table.agentId),
   ]
 );
@@ -218,6 +291,9 @@ export const worldEvents = pgTable(
   "world_events",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     eventId: varchar("event_id", { length: 128 }).notNull().unique(),
     type: text("type").notNull().default("custom"),
     source: text("source").notNull(), // "chatbot" | "synthetic" | "news"
@@ -233,6 +309,7 @@ export const worldEvents = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
   },
   (table) => [
+    index("world_events_session_id_idx").on(table.sessionId),
     index("world_events_status_idx").on(table.status),
     index("world_events_event_id_idx").on(table.eventId),
   ]
@@ -293,6 +370,9 @@ export const commands = pgTable(
   "commands",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
     type: text("type").notNull(),
     payload: jsonb("payload"),
     status: commandStatusEnum("status").notNull().default("pending"),
@@ -300,5 +380,68 @@ export const commands = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
     processedAt: timestamp("processed_at"),
   },
-  (table) => [index("commands_status_idx").on(table.status)]
+  (table) => [
+    index("commands_session_id_idx").on(table.sessionId),
+    index("commands_status_idx").on(table.status),
+  ]
+);
+
+export const agentEvents = pgTable(
+  "agent_events",
+  {
+    eventId: varchar("event_id", { length: 128 }).primaryKey(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
+    agentId: varchar("agent_id", { length: 128 })
+      .notNull()
+      .references(() => agents.id),
+    type: text("type").notNull(),
+    tick: integer("tick").notNull(),
+    payload: jsonb("payload").$type<AgentEvent>().notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [
+    index("agent_events_session_id_idx").on(table.sessionId),
+    index("agent_events_agent_id_idx").on(table.agentId),
+    index("agent_events_tick_idx").on(table.tick),
+  ]
+);
+
+type PersistedOrderBookPriceLevel = {
+  price: number;
+  qty: number;
+  orderCount: number;
+};
+
+export const orderBookSnapshots = pgTable(
+  "order_book_snapshots",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    sessionId: varchar("session_id", { length: 128 })
+      .notNull()
+      .references(() => simulationSessions.id),
+    symbol: varchar("symbol", { length: 10 }).notNull(),
+    tick: integer("tick").notNull().default(0),
+    bids: jsonb("bids")
+      .$type<PersistedOrderBookPriceLevel[]>()
+      .notNull()
+      .default([]),
+    asks: jsonb("asks")
+      .$type<PersistedOrderBookPriceLevel[]>()
+      .notNull()
+      .default([]),
+    lastPrice: real("last_price"),
+    spread: real("spread"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("order_book_snapshots_session_id_idx").on(table.sessionId),
+    index("order_book_snapshots_symbol_idx").on(table.symbol),
+    uniqueIndex("order_book_snapshots_session_symbol_uidx").on(
+      table.sessionId,
+      table.symbol
+    ),
+  ]
 );

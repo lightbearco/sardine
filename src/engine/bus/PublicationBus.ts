@@ -18,6 +18,23 @@ export class PublicationBus {
 		this.queue.push(note);
 	}
 
+	hydrate(notes: ResearchNote[], simTick: number): void {
+		this.queue = [...notes];
+		this.released = new Map<TierKey, Set<string>>([
+			["tier1", new Set()],
+			["tier2", new Set()],
+			["tier3", new Set()],
+		]);
+
+		for (const note of notes) {
+			for (const tier of ["tier1", "tier2", "tier3"] as const) {
+				if (simTick >= note.publishedAtTick + TIER_DELAYS[tier]) {
+					this.released.get(tier)?.add(note.id);
+				}
+			}
+		}
+	}
+
 	releaseDue(simTick: number): {
 		tier1: ResearchNote[];
 		tier2: ResearchNote[];

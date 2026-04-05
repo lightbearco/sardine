@@ -1,5 +1,6 @@
 import EventEmitter from "eventemitter3";
 import type { Trade, Order, LOBSnapshot, OHLCVBar } from "#/types/market";
+import type { ResearchNote } from "#/types/research";
 import type {
 	AgentEvent,
 	SimRuntimeState,
@@ -14,6 +15,7 @@ export interface EventMap {
 	ohlcv: [bar: OHLCVBar];
 	"world-event": [event: WorldEvent];
 	"agent-event": [event: AgentEvent];
+	"research-published": [note: ResearchNote];
 	"sim-state": [state: SimRuntimeState];
 }
 

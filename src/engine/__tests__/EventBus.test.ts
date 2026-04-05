@@ -64,6 +64,7 @@ describe("EventBus", () => {
 		bus.on("sim-state", simStateListener);
 
 		bus.emit("agent-event", {
+			eventId: "event-1",
 			type: "signal",
 			agentId: "agent-1",
 			agentName: "Agent 1",

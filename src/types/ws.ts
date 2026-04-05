@@ -23,49 +23,49 @@ export enum WsMessageType {
 // ── Channel Types ──
 
 export type WsChannel =
-	| `ohlcv:${string}` // per-symbol OHLCV
-	| `lob:${string}` // per-symbol order book
-	| `trades:${string}` // per-symbol trades
-	| "agents" // agent signal feed
-	| "research" // research note feed
-	| "sim" // sim state + controls
+	| `ohlcv:${string}:${string}` // per-session, per-symbol OHLCV
+	| `lob:${string}:${string}` // per-session, per-symbol order book
+	| `trades:${string}:${string}` // per-session, per-symbol trades
+	| `agents:${string}` // per-session agent signal feed
+	| `research:${string}` // per-session research note feed
+	| `sim:${string}` // per-session sim state + controls
 	| "world_events"; // world event notifications
 
 // ── Server → Client Messages ──
 
 export interface OhlcvUpdateMessage {
 	type: WsMessageType.OhlcvUpdate;
-	channel: `ohlcv:${string}`;
+	channel: `ohlcv:${string}:${string}`;
 	data: OHLCVBar;
 }
 
 export interface LobUpdateMessage {
 	type: WsMessageType.LobUpdate;
-	channel: `lob:${string}`;
+	channel: `lob:${string}:${string}`;
 	data: LOBSnapshot;
 }
 
 export interface TradeUpdateMessage {
 	type: WsMessageType.TradeUpdate;
-	channel: `trades:${string}`;
+	channel: `trades:${string}:${string}`;
 	data: Trade[];
 }
 
 export interface AgentSignalMessage {
 	type: WsMessageType.AgentSignal;
-	channel: "agents";
+	channel: `agents:${string}`;
 	data: AgentEvent;
 }
 
 export interface ResearchPublishedMessage {
 	type: WsMessageType.ResearchPublished;
-	channel: "research";
+	channel: `research:${string}`;
 	data: ResearchNote;
 }
 
 export interface SimStateMessage {
 	type: WsMessageType.SimState;
-	channel: "sim";
+	channel: `sim:${string}`;
 	data: SimRuntimeState;
 }
 

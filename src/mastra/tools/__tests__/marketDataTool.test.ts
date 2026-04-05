@@ -1,6 +1,7 @@
 import { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { marketDataTool } from "#/mastra/tools/marketDataTool";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import { createToolHarness, unwrapToolResult } from "./test-helpers";
@@ -15,7 +16,8 @@ describe("marketDataTool", () => {
 		));
 
 		expect(snapshot).toBeDefined();
-		expect(marketDataTool.outputSchema.parse(snapshot)).toBeDefined();
+		const outputSchema = marketDataTool.outputSchema as z.ZodTypeAny;
+		expect(outputSchema.parse(snapshot)).toBeDefined();
 		expect(snapshot.symbol).toBe("AAPL");
 		expect(snapshot.bids).toHaveLength(2);
 		expect(snapshot.asks).toHaveLength(2);

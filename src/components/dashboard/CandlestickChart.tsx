@@ -6,6 +6,7 @@ import {
 	type HistogramData,
 	type IChartApi,
 	type ISeriesApi,
+	type Time,
 } from "lightweight-charts";
 import { useMarketData } from "#/hooks/useMarketData";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
@@ -21,9 +22,9 @@ const TERMINAL_CHART_COLORS = {
 
 function toCandleData(
 	bars: ReturnType<typeof useMarketData>["bars"],
-): CandlestickData[] {
+): CandlestickData<Time>[] {
 	return bars.map((bar) => ({
-		time: bar.tick,
+		time: bar.tick as Time,
 		open: Number(bar.open),
 		high: Number(bar.high),
 		low: Number(bar.low),
@@ -34,12 +35,12 @@ function toCandleData(
 function toVolumeData(
 	bars: ReturnType<typeof useMarketData>["bars"],
 	colors: { green: string; red: string },
-): HistogramData[] {
+): HistogramData<Time>[] {
 	return bars.map((bar) => {
 		const open = Number(bar.open);
 		const close = Number(bar.close);
 		return {
-			time: bar.tick,
+			time: bar.tick as Time,
 			value: bar.volume,
 			color: close >= open ? colors.green : colors.red,
 		};
@@ -161,14 +162,14 @@ export function CandlestickChart() {
 			const lastBar = bars[bars.length - 1];
 			if (lastBar) {
 				candleSeries.update({
-					time: lastBar.tick,
+					time: lastBar.tick as Time,
 					open: Number(lastBar.open),
 					high: Number(lastBar.high),
 					low: Number(lastBar.low),
 					close: Number(lastBar.close),
 				});
 				volumeSeries.update({
-					time: lastBar.tick,
+					time: lastBar.tick as Time,
 					value: lastBar.volume,
 					color:
 						Number(lastBar.close) >= Number(lastBar.open)
@@ -181,20 +182,33 @@ export function CandlestickChart() {
 		prevLengthRef.current = bars.length;
 	}, [bars, symbol]);
 
+	const last = bars[bars.length - 1];
+	const open = last ? Number(last.open) : null;
+	const close = last ? Number(last.close) : null;
+	const changePct = open && close && open > 0 ? ((close - open) / open) * 100 : null;
+	const changePositive = changePct !== null && changePct >= 0;
+
 	return (
-		<section className="flex h-full min-h-0 flex-col rounded-xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)]">
-			<div className="flex items-center justify-between border-b border-[var(--terminal-border)] px-4 py-3">
-				<div>
-					<div className="text-sm font-semibold text-[var(--terminal-text)]">
-						{symbol} Candles
-					</div>
-					<div className="text-xs text-[var(--terminal-text-muted)]">
-						Live OHLCV feed
-					</div>
-				</div>
-				<div className="text-xs text-[var(--terminal-text-muted)]">
-					{isConnected ? "Connected" : "Waiting for feed"}
-				</div>
+		<section className="flex h-full min-h-0 flex-col rounded-xl border border-(--terminal-border) bg-(--terminal-surface)">
+			<div className="flex items-center gap-3 border-b border-(--terminal-border) px-3 py-2 shrink-0">
+				<span className="text-xs font-semibold text-(--terminal-text)">{symbol}</span>
+				{last && (
+					<>
+						<span className="font-mono text-sm font-bold text-(--terminal-text)">{close?.toFixed(2)}</span>
+						{changePct !== null && (
+							<span className="text-xs font-semibold tabular-nums" style={{ color: changePositive ? "var(--terminal-green)" : "var(--terminal-red)" }}>
+								{changePositive ? "+" : ""}{changePct.toFixed(2)}%
+							</span>
+						)}
+						<div className="flex items-center gap-3 text-[10px] text-(--terminal-text-muted) ml-1">
+							<span>O <span className="text-(--terminal-text)">{Number(last.open).toFixed(2)}</span></span>
+							<span>H <span style={{ color: "var(--terminal-green)" }}>{Number(last.high).toFixed(2)}</span></span>
+							<span>L <span style={{ color: "var(--terminal-red)" }}>{Number(last.low).toFixed(2)}</span></span>
+							<span>V <span className="text-(--terminal-text)">{last.volume.toLocaleString()}</span></span>
+						</div>
+					</>
+				)}
+				<span className="ml-auto text-[10px] text-(--terminal-text-muted)">{isConnected ? "Live" : "Waiting"}</span>
 			</div>
 			<div ref={containerRef} className="min-h-0 flex-1" />
 		</section>

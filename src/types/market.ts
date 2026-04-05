@@ -1,4 +1,4 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
 
 // ── Enums ──
 
@@ -63,4 +63,42 @@ export interface LOBSnapshot {
 	asks: PriceLevel[];
 	lastPrice: Decimal | null;
 	spread: Decimal | null;
+}
+
+// ── Wire-safe variants (plain numbers, safe to serialize across server/client boundary) ──
+
+export interface PriceLevelData {
+	price: number;
+	qty: number;
+	orderCount: number;
+}
+
+export interface LOBSnapshotData {
+	symbol: string;
+	bids: PriceLevelData[];
+	asks: PriceLevelData[];
+	lastPrice: number | null;
+	spread: number | null;
+}
+
+export interface OHLCVBarData {
+	symbol: string;
+	open: number;
+	high: number;
+	low: number;
+	close: number;
+	volume: number;
+	tick: number;
+}
+
+export interface TradeData {
+	id: string;
+	buyOrderId: string;
+	sellOrderId: string;
+	buyerAgentId: string;
+	sellerAgentId: string;
+	symbol: string;
+	price: number;
+	qty: number;
+	tick: number;
 }

@@ -1,6 +1,7 @@
 import { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
+import { TRADING_MODEL } from "#/mastra/models";
 import type { AgentConfig, AgentState } from "#/types/agent";
 import type { Trade } from "#/types/market";
 import { AgentRegistry } from "../AgentRegistry";
@@ -24,7 +25,7 @@ function makeConfig(id: string): AgentConfig {
 		sectors: ["tech"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 0,
 		decisionParams: {},
 	};

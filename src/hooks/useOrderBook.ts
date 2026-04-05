@@ -1,24 +1,37 @@
 import { useState, useEffect } from "react";
+import type { LOBSnapshotData } from "#/types/market";
+import { useSessionDashboard } from "./useSessionDashboard";
 import { useSimWebSocket } from "./useSimWebSocket";
-import type { LOBSnapshot } from "#/types/market";
 
-export function useOrderBook(
-	symbol: string,
-	initialSnapshot: LOBSnapshot | null = null,
-) {
+export function useOrderBook(symbol: string) {
   const { subscribe, isConnected } = useSimWebSocket();
-  const [snapshot, setSnapshot] = useState<LOBSnapshot | null>(initialSnapshot);
+  const {
+	sessionId,
+	isLive,
+	symbol: selectedSymbol,
+	snapshot: selectedSnapshot,
+	watchlist,
+  } = useSessionDashboard();
+  const initialSnapshot =
+	symbol === selectedSymbol
+		? selectedSnapshot
+		: watchlist[symbol]?.snapshot ?? null;
+  const [snapshot, setSnapshot] = useState<LOBSnapshotData | null>(initialSnapshot);
 
   useEffect(() => {
     if (!symbol) return;
     setSnapshot(initialSnapshot);
-    
-    const unsubscribe = subscribe(`lob:${symbol}`, (data: LOBSnapshot) => {
+
+    if (!isLive) {
+      return;
+    }
+
+    const unsubscribe = subscribe(`lob:${sessionId}:${symbol}`, (data: LOBSnapshotData) => {
       setSnapshot(data);
     });
 
     return unsubscribe;
-  }, [initialSnapshot, symbol, subscribe]);
+  }, [initialSnapshot, isLive, sessionId, symbol, subscribe]);
 
   return { snapshot, isConnected };
 }

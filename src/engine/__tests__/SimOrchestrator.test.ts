@@ -16,6 +16,8 @@ import { PublicationBus } from "#/engine/bus/PublicationBus";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SimClock } from "#/engine/sim/SimClock";
 import { SimOrchestrator } from "#/engine/sim/SimOrchestrator";
+import { TRADING_MODEL } from "#/mastra/models";
+import type { TradingDecision } from "#/mastra/agents/trading-agent";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 import type {
 	AgentConfig,
@@ -37,10 +39,7 @@ interface FakeCommandRow {
 	processedAt: Date | null;
 }
 
-function makeResearchNote(
-	id: string,
-	publishedAtTick: number,
-): ResearchNote {
+function makeResearchNote(id: string, publishedAtTick: number): ResearchNote {
 	return {
 		id,
 		agentId: "research-1",
@@ -50,6 +49,7 @@ function makeResearchNote(
 		sentiment: "bearish",
 		confidence: 0.78,
 		symbols: ["AAPL"],
+		sources: ["https://www.federalreserve.gov/newsevents.htm"],
 		publishedAtTick,
 		releasedToTier: "research",
 	};
@@ -76,7 +76,7 @@ function makeConfig(
 		sectors: ["Technology"],
 		risk: 0.4,
 		capital: 100_000,
-		model: "google/gemini-3.1-flash-lite-preview",
+		model: TRADING_MODEL,
 		llmGroup: 0,
 		decisionParams: {},
 		...overrides,
@@ -190,7 +190,9 @@ function createDbDouble(initialCommands: FakeCommandRow[] = []) {
 					set: Record<string, unknown>;
 				}) => {
 					if (table === agentsTable) {
-						state.upsertedAgents.push(...rows.map((row) => ({ ...row, ...set })));
+						state.upsertedAgents.push(
+							...rows.map((row) => ({ ...row, ...set })),
+						);
 					} else if (table === worldEventsTable) {
 						state.worldEvents.push(...rows.map((row) => ({ ...row, ...set })));
 					} else if (table === simConfigTable) {
@@ -208,7 +210,9 @@ function createDbDouble(initialCommands: FakeCommandRow[] = []) {
 					return;
 				}
 
-				const command = state.commands.find((entry) => entry.status === "pending");
+				const command = state.commands.find(
+					(entry) => entry.status === "pending",
+				);
 				if (!command) {
 					return;
 				}
@@ -251,7 +255,7 @@ function createTradingAgentDouble(
 			prompt: string,
 			options: Record<string, unknown>,
 		) => Promise<{
-			object: unknown;
+			object: TradingDecision;
 			chunks?: Array<{ type: string; payload?: { text?: string } }>;
 		}>
 	>,
@@ -272,7 +276,8 @@ function createTradingAgentDouble(
 			return contexts;
 		},
 		stream: async (prompt: string, options: Record<string, unknown>) => {
-			const requestContext = options.requestContext as RequestContext<TradingRequestContextValues>;
+			const requestContext =
+				options.requestContext as RequestContext<TradingRequestContextValues>;
 			const agentId = requestContext.get("agent-id");
 			if (!agentId) {
 				throw new Error("Missing agent-id");
@@ -476,8 +481,14 @@ describe("SimOrchestrator", () => {
 		expect(signalListener).toHaveBeenCalled();
 		expect(worldEventListener).toHaveBeenCalledOnce();
 		expect(simStateListener).toHaveBeenCalledOnce();
+		expect(tradingAgent.prompts[0]).toContain(note.headline);
+		expect(
+			tradingAgent.contexts[0]?.["released-research-notes"]?.[0]?.headline,
+		).toBe(note.headline);
 
-		expect(activeEntry.state.researchInbox.get(note.id)?.headline).toBe(note.headline);
+		expect(activeEntry.state.researchInbox.get(note.id)?.headline).toBe(
+			note.headline,
+		);
 		expect(inactiveEntry.state.researchInbox.get(note.id)?.headline).toBe(
 			note.headline,
 		);
@@ -542,7 +553,7 @@ describe("SimOrchestrator", () => {
 		const { db } = createDbDouble();
 
 		const tradingAgent = createTradingAgentDouble({
-			"active-agent": async (_prompt, options) =>
+			"active-agent": async (_prompt, _options) =>
 				new Promise((resolve) => {
 					setTimeout(() => {
 						resolve({
@@ -600,9 +611,9 @@ describe("SimOrchestrator", () => {
 		const agentEventListener = vi.fn();
 		eventBus.on("agent-event", agentEventListener);
 		const tradingAgent = createTradingAgentDouble({
-			"active-agent": async (_prompt, options) =>
+			"active-agent": async (_prompt, _options) =>
 				new Promise((_, reject) => {
-					const signal = options.abortSignal as AbortSignal;
+					const signal = _options.abortSignal as AbortSignal;
 					signal.addEventListener("abort", () => {
 						reject(new Error("aborted"));
 					});
@@ -663,7 +674,7 @@ describe("SimOrchestrator", () => {
 		const tradingAgent = createTradingAgentDouble({
 			"active-agent": async () => ({
 				object: {
-					reasoning: 42,
+					reasoning: "timeout",
 					ordersPlaced: [],
 					autopilotDirective: {
 						standingOrders: [],

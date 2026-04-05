@@ -1,31 +1,56 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSimWebSocket } from "./useSimWebSocket";
-import type { OHLCVBar } from "#/types/market";
+import { useSessionDashboard } from "./useSessionDashboard";
+import type { OHLCVBarData } from "#/types/market";
 
-export function useMarketData(
-	symbol: string,
-	initialLastBar: OHLCVBar | null = null,
-) {
+function mergeBar(previous: OHLCVBarData[], bar: OHLCVBarData): OHLCVBarData[] {
+	const lastBar = previous[previous.length - 1];
+	if (lastBar && lastBar.tick === bar.tick) {
+		return [...previous.slice(0, -1), bar];
+	}
+
+	return [...previous, bar];
+}
+
+export function useMarketData(symbol: string) {
   const { subscribe, isConnected } = useSimWebSocket();
-  const [bars, setBars] = useState<OHLCVBar[]>(
-    initialLastBar ? [initialLastBar] : [],
+  const {
+	sessionId,
+	isLive,
+	symbol: selectedSymbol,
+	bars: selectedBars,
+	watchlist,
+  } = useSessionDashboard();
+  const initialBars = useMemo(
+	() =>
+		symbol === selectedSymbol
+			? selectedBars
+			: watchlist[symbol]?.lastBar
+				? [watchlist[symbol].lastBar]
+				: [],
+	[selectedBars, selectedSymbol, symbol, watchlist],
   );
-  const [lastBar, setLastBar] = useState<OHLCVBar | null>(initialLastBar);
+  const initialLastBar = initialBars[initialBars.length - 1] ?? null;
+  const [bars, setBars] = useState<OHLCVBarData[]>(initialBars);
+  const [lastBar, setLastBar] = useState<OHLCVBarData | null>(initialLastBar);
 
   useEffect(() => {
     if (!symbol) return;
     
-    // reset on symbol change
-    setBars(initialLastBar ? [initialLastBar] : []);
+    setBars(initialBars);
     setLastBar(initialLastBar);
 
-    const unsubscribe = subscribe(`ohlcv:${symbol}`, (bar: OHLCVBar) => {
-      setBars((prev) => [...prev, bar]);
+    if (!isLive) {
+      return;
+    }
+
+    const unsubscribe = subscribe(`ohlcv:${sessionId}:${symbol}`, (bar: OHLCVBarData) => {
+      setBars((prev) => mergeBar(prev, bar));
       setLastBar(bar);
     });
 
     return unsubscribe;
-  }, [initialLastBar, symbol, subscribe]);
+  }, [initialBars, initialLastBar, isLive, sessionId, symbol, subscribe]);
 
   return { bars, lastBar, isConnected };
 }

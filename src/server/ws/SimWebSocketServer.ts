@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { connectionManager } from "./ConnectionManager";
 
 export function startSimWebSocketServer(port: number = Number(process.env.WS_PORT) || 3001) {
+  const verboseChannelLogs = process.env.SIM_WS_VERBOSE_LOGS === "1";
   const wss = new WebSocketServer({ port });
 
   wss.on("connection", (ws: WebSocket) => {
@@ -14,10 +15,14 @@ export function startSimWebSocketServer(port: number = Number(process.env.WS_POR
         
         if (parsed.type === "subscribe" && typeof parsed.channel === "string") {
           connectionManager.subscribe(ws, parsed.channel);
-          console.log(`Subscribed to channel: ${parsed.channel}`);
+          if (verboseChannelLogs) {
+            console.log(`Subscribed to channel: ${parsed.channel}`);
+          }
         } else if (parsed.type === "unsubscribe" && typeof parsed.channel === "string") {
           connectionManager.unsubscribe(ws, parsed.channel);
-          console.log(`Unsubscribed from channel: ${parsed.channel}`);
+          if (verboseChannelLogs) {
+            console.log(`Unsubscribed from channel: ${parsed.channel}`);
+          }
         }
       } catch (err) {
         console.error("Failed to parse websocket message:", err);
