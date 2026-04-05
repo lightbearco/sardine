@@ -1,8 +1,5 @@
 import { format } from "date-fns";
 import { PauseIcon, PlayIcon, StepForwardIcon } from "lucide-react";
-import { DEV_TICKERS } from "#/lib/constants";
-import { useSimControls } from "#/hooks/useSimControls";
-import { useSymbolSelection } from "#/hooks/useSymbolSelection";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
@@ -13,6 +10,9 @@ import {
 	SelectValue,
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
+import { useSimControls } from "#/hooks/useSimControls";
+import { useSymbolSelection } from "#/hooks/useSymbolSelection";
+import { DEV_TICKERS } from "#/lib/constants";
 
 const SPEED_OPTIONS = [0.5, 1, 2, 5, 10];
 
@@ -29,7 +29,8 @@ function formatTimestamp(value: Date | null | undefined) {
 
 export function TopBar() {
 	const { symbol } = useSymbolSelection();
-	const { simState, play, pause, step, isConnected, setSpeed } = useSimControls();
+	const { simState, play, pause, step, isConnected, setSpeed } =
+		useSimControls();
 	const ticker = DEV_TICKERS.find((item) => item.symbol === symbol);
 	const latencyMs = simState?.lastSummary?.durationMs;
 	const statusClassName = !isConnected
@@ -66,23 +67,20 @@ export function TopBar() {
 			</div>
 
 			<div className="flex items-center gap-2">
-				<Button size="icon-sm" variant="secondary" onClick={() => void play()}>
+				<Button size="icon-sm" variant="ghost" onClick={() => void play()}>
 					<PlayIcon className="size-4" />
 				</Button>
-				<Button size="icon-sm" variant="secondary" onClick={() => void pause()}>
+				<Button size="icon-sm" variant="ghost" onClick={() => void pause()}>
 					<PauseIcon className="size-4" />
 				</Button>
-				<Button size="icon-sm" variant="secondary" onClick={() => void step()}>
+				<Button size="icon-sm" variant="ghost" onClick={() => void step()}>
 					<StepForwardIcon className="size-4" />
 				</Button>
 				<Select
 					value={String(simState?.speedMultiplier ?? 1)}
 					onValueChange={(value) => void setSpeed(Number(value))}
 				>
-					<SelectTrigger
-						size="sm"
-						className="w-24 border-[var(--terminal-border)] bg-background text-[var(--terminal-text)]"
-					>
+					<SelectTrigger size="sm" className="w-24 border-none bg-transparent">
 						<SelectValue placeholder="Speed" />
 					</SelectTrigger>
 					<SelectContent>

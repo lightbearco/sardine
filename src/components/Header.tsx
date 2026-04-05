@@ -4,12 +4,16 @@ import { Button } from "./ui/button";
 
 export default function Header() {
 	return (
-		<header className="sticky top-0 z-40 border-b bg-background/95 text-foreground backdrop-blur-lg">
+		<header className="sticky top-0 z-40 border-b bg-transparent backdrop-blur-2xl text-foreground backdrop-blur-lg">
 			<nav className="page-wrap flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-4 sm:py-4">
 				<div className="min-w-0 flex-1 sm:flex-none">
-					<Link to="/" className="flex items-center ">
-						<img src="/sardine-logo.png" alt="Sardine" className="size-10" />
-						<span className="truncate font-semibold tracking-tighter text-xl">
+					<Link to="/" className="flex items-center">
+						<img
+							src="/sardine-logo-white.png"
+							alt="Sardine"
+							className="size-10 rounded-lg"
+						/>
+						<span className="truncate font-semibold tracking-tighter text-xl text-white">
 							Sardine
 						</span>
 					</Link>

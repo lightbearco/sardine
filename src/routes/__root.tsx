@@ -52,7 +52,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<head>
 				<HeadContent />
 			</head>
-			<body className="min-h-screen font-sans antialiased [overflow-wrap:anywhere] selection:bg-primary/20 selection:text-foreground">
+			<body className="dark min-h-screen font-sans antialiased [overflow-wrap:anywhere] selection:bg-primary/20 selection:text-foreground">
 				<TooltipProvider>
 					<Header />
 					<SimWebSocketProvider>

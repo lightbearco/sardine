@@ -1,9 +1,9 @@
-import { memo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { DEV_TICKERS, type TickerConfig } from "#/lib/constants";
+import { memo, useRef } from "react";
 import { useMarketData } from "#/hooks/useMarketData";
 import { useOrderBook } from "#/hooks/useOrderBook";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
+import { DEV_TICKERS, type TickerConfig } from "#/lib/constants";
 
 function formatPrice(value: unknown) {
 	const parsed = Number(value);
@@ -36,14 +36,16 @@ const WatchlistRow = memo(function WatchlistRow({
 		<button
 			type="button"
 			onClick={() => onSelect(ticker.symbol)}
-			className={`grid w-full grid-cols-[64px_1fr_64px_72px_64px] gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
+			className={`grid  w-full grid-cols-[64px_1fr_64px_72px_64px] gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
 				selected
 					? "bg-accent text-accent-foreground"
 					: "text-[var(--terminal-text)] hover:bg-white/5"
 			}`}
 		>
 			<div className="font-semibold">{ticker.symbol}</div>
-			<div className="truncate">{formatPrice(snapshot?.lastPrice ?? close)}</div>
+			<div className="truncate">
+				{formatPrice(snapshot?.lastPrice ?? close)}
+			</div>
 			<div
 				className={
 					changePct === "—"
@@ -97,7 +99,7 @@ export function Watchlist() {
 						return (
 							<div
 								key={ticker.symbol}
-								className="absolute inset-x-0 top-0"
+								className="absolute inset-x-0 top-0 p-2"
 								style={{ transform: `translateY(${virtualItem.start}px)` }}
 							>
 								<WatchlistRow
