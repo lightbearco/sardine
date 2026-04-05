@@ -1,5 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRightIcon, LayoutDashboardIcon, RadioTowerIcon } from "lucide-react";
+import {
+	ArrowRightIcon,
+	LayoutDashboardIcon,
+	RadioTowerIcon,
+} from "lucide-react";
 import { Button } from "#/components/ui/button";
 
 export const Route = createFileRoute("/")({
@@ -8,13 +12,9 @@ export const Route = createFileRoute("/")({
 
 function LandingPage() {
 	return (
-		<main className="page-wrap px-4 pb-16 pt-12">
-			<section className="rounded-2xl border bg-card p-8 text-card-foreground shadow-sm sm:p-10">
+		<main className="page-wrap pb-16 pt-12">
+			<section>
 				<div className="max-w-3xl space-y-5">
-					<div className="inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs font-medium uppercase tracking-[0.16em] text-secondary-foreground">
-						<RadioTowerIcon className="size-3.5" />
-						Sardine Terminal
-					</div>
 					<div className="space-y-3">
 						<h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
 							Realtime market simulation, one dashboard away.
@@ -27,12 +27,12 @@ function LandingPage() {
 					<div className="flex flex-wrap gap-3">
 						<Button asChild size="lg">
 							<Link to="/dashboard">
-								<LayoutDashboardIcon className="size-4" />
-								Open Dashboard
-								<ArrowRightIcon className="size-4" />
+								<LayoutDashboardIcon className="size-4 text-primary-foreground" />
+								<span className="text-primary-foreground">Open Dashboard</span>
+								<ArrowRightIcon className="size-4 text-primary-foreground" />
 							</Link>
 						</Button>
-						<Button asChild variant="secondary" size="lg">
+						<Button variant="secondary" size="lg">
 							<Link to="/about">About Sardine</Link>
 						</Button>
 					</div>
@@ -42,7 +42,8 @@ function LandingPage() {
 								Market View
 							</div>
 							<div className="mt-2 text-sm text-foreground">
-								Candles, order book, time and sales, and market stats in one layout.
+								Candles, order book, time and sales, and market stats in one
+								layout.
 							</div>
 						</div>
 						<div className="rounded-xl border bg-secondary/40 p-4">
@@ -58,7 +59,8 @@ function LandingPage() {
 								Control View
 							</div>
 							<div className="mt-2 text-sm text-foreground">
-								Manage sim state, tick progression, and playback speed from the top bar.
+								Manage sim state, tick progression, and playback speed from the
+								top bar.
 							</div>
 						</div>
 					</div>
