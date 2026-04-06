@@ -13,6 +13,7 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardSessionIdRouteImport } from './routes/dashboard.$sessionId'
+import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const DashboardRoute = DashboardRouteImport.update({
@@ -35,6 +36,11 @@ const DashboardSessionIdRoute = DashboardSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => DashboardRoute,
 } as any)
+const ApiChatRoute = ApiChatRouteImport.update({
+  id: '/api/chat',
+  path: '/api/chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -44,12 +50,14 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
+  '/api/chat': typeof ApiChatRoute
   '/dashboard/$sessionId': typeof DashboardSessionIdRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/chat': typeof ApiChatRoute
   '/dashboard/$sessionId': typeof DashboardSessionIdRoute
   '/dashboard': typeof DashboardIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -58,6 +66,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
+  '/api/chat': typeof ApiChatRoute
   '/dashboard/$sessionId': typeof DashboardSessionIdRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -67,15 +76,17 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
+    | '/api/chat'
     | '/dashboard/$sessionId'
     | '/dashboard/'
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard/$sessionId' | '/dashboard' | '/api/auth/$'
+  to: '/' | '/api/chat' | '/dashboard/$sessionId' | '/dashboard' | '/api/auth/$'
   id:
     | '__root__'
     | '/'
     | '/dashboard'
+    | '/api/chat'
     | '/dashboard/$sessionId'
     | '/dashboard/'
     | '/api/auth/$'
@@ -84,6 +95,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRouteWithChildren
+  ApiChatRoute: typeof ApiChatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -117,6 +129,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardSessionIdRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/api/chat': {
+      id: '/api/chat'
+      path: '/api/chat'
+      fullPath: '/api/chat'
+      preLoaderRoute: typeof ApiChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -144,6 +163,7 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRouteWithChildren,
+  ApiChatRoute: ApiChatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

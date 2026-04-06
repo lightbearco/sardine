@@ -30,7 +30,7 @@ class MastraPinoLogger extends MastraLogger {
 }
 
 export const mastra = new Mastra({
-	agents: { tradingAgent, researchAgent },
+	agents: { tradingAgent, researchAgent, chatbotAgent },
 	storage: postgresStore,
 	vectors: {
 		pgVector,

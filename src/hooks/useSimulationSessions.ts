@@ -23,9 +23,9 @@ const deleteSimulationSessionInputSchema = z.object({
 	sessionId: z.string().min(1),
 });
 
-export const listSimulationSessionsFn = createServerFn({ method: "GET" }).handler(
-	async () => listSimulationSessions(),
-);
+export const listSimulationSessionsFn = createServerFn({
+	method: "GET",
+}).handler(async () => listSimulationSessions());
 
 export const createSimulationSessionFn = createServerFn({ method: "POST" })
 	.inputValidator((data: z.infer<typeof createSimulationSessionInputSchema>) =>
@@ -34,9 +34,8 @@ export const createSimulationSessionFn = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => createSimulationSession(data));
 
 export const deleteSimulationSessionFn = createServerFn({ method: "POST" })
-	.inputValidator(
-		(data: z.infer<typeof deleteSimulationSessionInputSchema>) =>
-			deleteSimulationSessionInputSchema.parse(data),
+	.inputValidator((data: z.infer<typeof deleteSimulationSessionInputSchema>) =>
+		deleteSimulationSessionInputSchema.parse(data),
 	)
 	.handler(async ({ data }) => deleteSimulationSession(data.sessionId));
 
@@ -46,7 +45,7 @@ export const getSessionDashboardFn = createServerFn({ method: "GET" })
 	)
 	.handler(async ({ data }) => getSessionDashboardHydration(data));
 
-export const getSessionSymbolFn = createServerFn({ method: "GET" })
+export const getSessionSymbolFn = createServerFn({ method: "POST" })
 	.inputValidator((data: z.infer<typeof sessionSymbolInputSchema>) =>
 		sessionSymbolInputSchema.parse(data),
 	)

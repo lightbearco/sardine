@@ -99,7 +99,7 @@ export const SIM_DEFAULTS = {
 	researchFrequency: 20,
 	marketMakerRequoteEnabled: true,
 	marketMakerMinBookDepth: 2,
-	alpacaDataTypes: ["snapshots"] as string[],
+	alpacaDataTypes: ["snapshots", "bars"] as string[],
 } as const;
 
 /** Full S&P 500 tickers — symbol, name, sector. Switch to this for production scale. */

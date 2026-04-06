@@ -338,6 +338,18 @@ export function SessionDashboardProvider({
 		if (plan.mode === "hydrate") {
 			hydratedSymbolKeyRef.current = plan.nextHydratedSymbolKey;
 			setSymbolData(plan.symbolData);
+
+			const requestId = symbolRequestIdRef.current + 1;
+			symbolRequestIdRef.current = requestId;
+			void getSessionSymbolFn({ data: { sessionId, symbol } })
+				.then((next) => {
+					if (!next || symbolRequestIdRef.current !== requestId) {
+						return;
+					}
+					setSymbolData(next);
+				})
+				.catch(() => {});
+
 			return;
 		}
 

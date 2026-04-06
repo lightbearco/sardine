@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AgentsPanel } from "#/components/dashboard/AgentsPanel";
 import { Blotter } from "#/components/dashboard/Blotter";
 import { CandlestickChart } from "#/components/dashboard/CandlestickChart";
+import { ChatPanel } from "#/components/dashboard/ChatPanel";
 import { OrderBookPanel } from "#/components/dashboard/OrderBookPanel";
 import { ResearchFeed } from "#/components/dashboard/ResearchFeed";
 import { TimeAndSales } from "#/components/dashboard/TimeAndSales";
@@ -32,12 +33,18 @@ const dashboardSearchSchema = z.object({
 	symbol: z.string().optional(),
 });
 
-export const dashboardLoaderDeps = () => ({});
+export const dashboardLoaderDeps = ({
+	search,
+}: {
+	search: { symbol?: string };
+}) => ({
+	symbol: search.symbol ?? "",
+});
 
 export const Route = createFileRoute("/dashboard/$sessionId")({
 	validateSearch: (search) => dashboardSearchSchema.parse(search),
 	loaderDeps: dashboardLoaderDeps,
-	loader: async ({ params, location }) => {
+	loader: async ({ params, deps }) => {
 		const dashboard = await getSessionDashboardFn({
 			data: { sessionId: params.sessionId },
 		});
@@ -46,9 +53,8 @@ export const Route = createFileRoute("/dashboard/$sessionId")({
 			return { dashboard: null, symbolData: null };
 		}
 
-		const searchParams = new URLSearchParams(location.search);
 		const symbol = normalizeSessionSymbol(
-			searchParams.get("symbol") ?? undefined,
+			deps.symbol || undefined,
 			dashboard.session.symbols,
 		);
 		const symbolData = await getSessionSymbolFn({
@@ -277,6 +283,7 @@ function DashboardBody() {
 					</Allotment>
 				</div>
 			</div>
+			<ChatPanel />
 		</main>
 	);
 }

@@ -131,7 +131,7 @@ function mapSessionSummary(
 		llmConcurrency: session.llmConcurrency,
 		llmTimeoutMs: session.llmTimeoutMs,
 		researchFrequency: session.researchFrequency,
-		alpacaDataTypes: session.alpacaDataTypes ?? ["snapshots"],
+		alpacaDataTypes: session.alpacaDataTypes ?? ["snapshots", "bars"],
 		traderDistribution:
 			session.traderDistribution ??
 			buildDefaultTraderDistribution(session.agentCount),

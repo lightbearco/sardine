@@ -13,7 +13,7 @@ const log = createLogger("Alpaca");
 
 const FALLBACK_SEED_PRICE = 150;
 const FALLBACK_SPREAD = 0.1;
-const DEFAULT_DATA_TYPES: AlpacaDataType[] = ["snapshots"];
+const DEFAULT_DATA_TYPES: AlpacaDataType[] = ["snapshots", "bars"];
 
 export interface BootstrapSymbolMarketData {
 	symbol: string;

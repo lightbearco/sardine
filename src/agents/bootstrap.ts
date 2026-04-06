@@ -13,7 +13,6 @@ import { createLogger } from "#/lib/logger";
 import {
 	agents as agentsTable,
 	orderBookSnapshots as orderBookSnapshotsTable,
-	orders as ordersTable,
 	simConfig as simConfigTable,
 	ticks as ticksTable,
 } from "#/db/schema";
@@ -33,10 +32,6 @@ export type { ResearchAgentWorker } from "#/agents/factory";
 const log = createLogger("Bootstrap");
 
 const DEFAULT_SEED_PRICE = new Decimal(150);
-const DEFAULT_SEED_SPREAD = new Decimal("0.10");
-const MIN_SPREAD = new Decimal("0.02");
-const DEFAULT_BOOK_DEPTH = 5;
-const DEFAULT_BOOK_QTY = 100;
 
 type SeededRandom = ReturnType<typeof createSeededRandom>;
 
@@ -336,15 +331,6 @@ function resolveSeedMidPrice(
 ): Decimal {
 	const quote = marketData?.symbols[symbol];
 	return new Decimal(quote?.midPrice ?? quote?.lastPrice ?? DEFAULT_SEED_PRICE);
-}
-
-function resolveSeedSpread(
-	symbol: string,
-	marketData?: BootstrapMarketData | null,
-): Decimal {
-	const quote = marketData?.symbols[symbol];
-	const spread = new Decimal(quote?.spread ?? DEFAULT_SEED_SPREAD);
-	return Decimal.max(spread, MIN_SPREAD);
 }
 
 function resolveHistoricalTick(
@@ -650,25 +636,6 @@ export async function bootstrapSimulation(
 			resolveSeedMidPrice(symbol, input.marketData),
 		]),
 	);
-	const seedOrders: Order[] = [];
-
-	for (const symbol of input.symbols) {
-		seedOrders.push(
-			...matchingEngine.seedBook(
-				symbol,
-				resolveSeedMidPrice(symbol, input.marketData),
-				resolveSeedSpread(symbol, input.marketData),
-				DEFAULT_BOOK_DEPTH,
-				DEFAULT_BOOK_QTY,
-				historicalTickCount,
-			),
-		);
-	}
-
-	for (const order of seedOrders) {
-		order.agentId = seedAgentId;
-	}
-
 	seedAgentState({
 		agentRegistry,
 		symbols: input.symbols,
@@ -733,24 +700,6 @@ export async function bootstrapSimulation(
 			...researchRows,
 			...agentRows,
 		]);
-
-		if (seedOrders.length > 0) {
-			await tx.insert(ordersTable).values(
-				seedOrders.map((order) => ({
-					id: order.id,
-					sessionId: input.sessionId,
-					tick: order.createdAtTick,
-					agentId: order.agentId,
-					symbol: order.symbol,
-					type: order.type,
-					side: order.side,
-					status: order.status,
-					price: order.price.toNumber(),
-					quantity: order.qty,
-					filledQuantity: order.filledQty,
-				})),
-			);
-		}
 
 		if (bootstrapBars.length > 0) {
 			await tx.insert(ticksTable).values(bootstrapBars);

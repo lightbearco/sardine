@@ -20,9 +20,9 @@ describe("alpaca client", () => {
 				json: async () => ({
 					quotes: {
 						AAPL: {
-							BidPrice: 100,
-							AskPrice: 101,
-							Timestamp: "2026-04-05T10:00:00Z",
+							bp: 100,
+							ap: 101,
+							t: "2026-04-05T10:00:00Z",
 						},
 					},
 				}),
@@ -105,14 +105,13 @@ describe("alpaca client", () => {
 				json: async () => ({
 					trades: {
 						AAPL: {
-							Symbol: "AAPL",
-							Price: 150.5,
-							Size: 200,
-							Timestamp: "2026-04-05T10:00:00Z",
-							Exchange: "Q",
-							Conditions: ["@", "T"],
-							ID: 1,
-							Tape: "C",
+							t: "2026-04-05T10:00:00Z",
+							p: 150.5,
+							s: 200,
+							x: "Q",
+							c: ["@", "T"],
+							i: 1,
+							z: "C",
 						},
 					},
 				}),
@@ -154,38 +153,35 @@ describe("alpaca client", () => {
 				json: async () => ({
 					snapshots: {
 						AAPL: {
-							DailyBar: {
-								Symbol: "AAPL",
-								OpenPrice: 99,
-								HighPrice: 102,
-								LowPrice: 98,
-								ClosePrice: 101,
-								Volume: 1000,
-								Timestamp: "2026-04-05T00:00:00Z",
+							dailyBar: {
+								t: "2026-04-05T00:00:00Z",
+								o: 99,
+								h: 102,
+								l: 98,
+								c: 101,
+								v: 1000,
 							},
-							LatestTrade: {
-								Symbol: "AAPL",
-								Price: 101,
-								Size: 50,
-								Timestamp: "2026-04-05T10:00:00Z",
-								Exchange: "Q",
-								Conditions: [],
-								ID: 1,
-								Tape: "C",
+							latestTrade: {
+								t: "2026-04-05T10:00:00Z",
+								p: 101,
+								s: 50,
+								x: "Q",
+								c: [],
+								i: 1,
+								z: "C",
 							},
-							LatestQuote: {
-								BidPrice: 100.5,
-								AskPrice: 101.5,
-								Timestamp: "2026-04-05T10:00:00Z",
+							latestQuote: {
+								bp: 100.5,
+								ap: 101.5,
+								t: "2026-04-05T10:00:00Z",
 							},
-							PrevDailyBar: {
-								Symbol: "AAPL",
-								OpenPrice: 97,
-								HighPrice: 100,
-								LowPrice: 96,
-								ClosePrice: 99,
-								Volume: 800,
-								Timestamp: "2026-04-04T00:00:00Z",
+							prevDailyBar: {
+								t: "2026-04-04T00:00:00Z",
+								o: 97,
+								h: 100,
+								l: 96,
+								c: 99,
+								v: 800,
 							},
 						},
 					},
@@ -248,14 +244,13 @@ describe("alpaca client", () => {
 				json: async () => ({
 					snapshots: {
 						AAPL: {
-							DailyBar: {
-								Symbol: "AAPL",
-								OpenPrice: 99,
-								HighPrice: 102,
-								LowPrice: 98,
-								ClosePrice: 101,
-								Volume: 1000,
-								Timestamp: "2026-04-05T00:00:00Z",
+							dailyBar: {
+								t: "2026-04-05T00:00:00Z",
+								o: 99,
+								h: 102,
+								l: 98,
+								c: 101,
+								v: 1000,
 							},
 						},
 					},

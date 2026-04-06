@@ -107,9 +107,32 @@ function resolveMidPrice(input: {
 	return bidPrice ?? askPrice ?? null;
 }
 
+type RawBar = {
+	t: string;
+	o: number;
+	h: number;
+	l: number;
+	c: number;
+	v: number;
+};
+type RawTrade = { t: string; p: number; s: number; x: string; c?: string[] };
+type RawQuote = {
+	t: string;
+	bp?: number;
+	bs?: number;
+	ap?: number;
+	as?: number;
+};
+type RawSnapshot = {
+	dailyBar?: RawBar;
+	latestTrade?: RawTrade;
+	latestQuote?: RawQuote;
+	prevDailyBar?: RawBar;
+};
+
 function normalizeQuote(
 	symbol: string,
-	quote: AlpacaQuote | undefined,
+	quote: AlpacaQuote | RawQuote | undefined,
 ): AlpacaQuoteSnapshot {
 	if (!quote) {
 		return {
@@ -123,8 +146,13 @@ function normalizeQuote(
 		};
 	}
 
-	const bidPrice = Number.isFinite(quote.BidPrice) ? quote.BidPrice : null;
-	const askPrice = Number.isFinite(quote.AskPrice) ? quote.AskPrice : null;
+	const raw = quote as Record<string, unknown>;
+	const bidRaw = raw.BidPrice ?? raw.bp;
+	const askRaw = raw.AskPrice ?? raw.ap;
+	const bidPrice =
+		typeof bidRaw === "number" && Number.isFinite(bidRaw) ? bidRaw : null;
+	const askPrice =
+		typeof askRaw === "number" && Number.isFinite(askRaw) ? askRaw : null;
 	const midPrice = resolveMidPrice({ bidPrice, askPrice });
 	const spread =
 		bidPrice !== null && askPrice !== null
@@ -138,36 +166,44 @@ function normalizeQuote(
 		midPrice,
 		lastPrice: midPrice,
 		spread,
-		timestamp: quote.Timestamp ?? null,
+		timestamp: ((raw.Timestamp ?? raw.t) as string | undefined) ?? null,
 	};
 }
 
-function normalizeBar(bar: AlpacaBar): AlpacaBarSnapshot {
+function normalizeBar(
+	bar: AlpacaBar | RawBar,
+	symbol?: string,
+): AlpacaBarSnapshot {
+	const raw = bar as Record<string, unknown>;
 	return {
-		symbol: bar.Symbol,
-		open: bar.OpenPrice,
-		high: bar.HighPrice,
-		low: bar.LowPrice,
-		close: bar.ClosePrice,
-		volume: bar.Volume,
-		timestamp: bar.Timestamp,
+		symbol: (raw.Symbol ?? symbol ?? "") as string,
+		open: (raw.OpenPrice ?? raw.o) as number,
+		high: (raw.HighPrice ?? raw.h) as number,
+		low: (raw.LowPrice ?? raw.l) as number,
+		close: (raw.ClosePrice ?? raw.c) as number,
+		volume: (raw.Volume ?? raw.v) as number,
+		timestamp: (raw.Timestamp ?? raw.t) as string,
 	};
 }
 
-function normalizeTrade(trade: AlpacaTrade): AlpacaTradeSnapshot {
+function normalizeTrade(
+	trade: AlpacaTrade | RawTrade,
+	symbol?: string,
+): AlpacaTradeSnapshot {
+	const raw = trade as Record<string, unknown>;
 	return {
-		symbol: trade.Symbol,
-		price: trade.Price,
-		size: trade.Size,
-		timestamp: trade.Timestamp,
-		exchange: trade.Exchange,
-		conditions: trade.Conditions ?? [],
+		symbol: (raw.Symbol ?? symbol ?? "") as string,
+		price: (raw.Price ?? raw.p) as number,
+		size: (raw.Size ?? raw.s) as number,
+		timestamp: (raw.Timestamp ?? raw.t) as string,
+		exchange: (raw.Exchange ?? raw.x ?? "") as string,
+		conditions: (raw.Conditions ?? raw.c ?? []) as string[],
 	};
 }
 
 function normalizeSnapshot(
 	symbol: string,
-	snapshot: AlpacaSnapshot | undefined,
+	snapshot: AlpacaSnapshot | RawSnapshot | undefined,
 ): AlpacaMarketSnapshot {
 	if (!snapshot) {
 		return {
@@ -179,17 +215,23 @@ function normalizeSnapshot(
 		};
 	}
 
+	const raw = snapshot as Record<string, unknown>;
+	const dailyBar = raw.DailyBar ?? raw.dailyBar;
+	const latestTrade = raw.LatestTrade ?? raw.latestTrade;
+	const latestQuote = raw.LatestQuote ?? raw.latestQuote;
+	const prevDailyBar = raw.PrevDailyBar ?? raw.prevDailyBar;
+
 	return {
 		symbol,
-		dailyBar: snapshot.DailyBar ? normalizeBar(snapshot.DailyBar) : null,
-		dailyTrade: snapshot.LatestTrade
-			? normalizeTrade(snapshot.LatestTrade)
+		dailyBar: dailyBar ? normalizeBar(dailyBar as AlpacaBar, symbol) : null,
+		dailyTrade: latestTrade
+			? normalizeTrade(latestTrade as AlpacaTrade, symbol)
 			: null,
-		dailyQuote: snapshot.LatestQuote
-			? normalizeQuote(symbol, snapshot.LatestQuote)
+		dailyQuote: latestQuote
+			? normalizeQuote(symbol, latestQuote as AlpacaQuote)
 			: null,
-		prevDailyBar: snapshot.PrevDailyBar
-			? normalizeBar(snapshot.PrevDailyBar)
+		prevDailyBar: prevDailyBar
+			? normalizeBar(prevDailyBar as AlpacaBar, symbol)
 			: null,
 	};
 }
@@ -279,7 +321,9 @@ export function createAlpacaClient(
 			return new Map(
 				symbols.map((symbol) => [
 					symbol,
-					(bars.get(symbol) ?? []).map(normalizeBar).slice(-limit),
+					(bars.get(symbol) ?? [])
+						.map((bar) => normalizeBar(bar))
+						.slice(-limit),
 				]),
 			);
 		},
@@ -310,6 +354,7 @@ export function createAlpacaClient(
 							ID: 0,
 							Tape: "",
 						},
+						symbol,
 					),
 				]),
 			);
