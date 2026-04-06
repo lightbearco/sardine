@@ -1,6 +1,5 @@
 import { pathToFileURL } from "node:url";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import Decimal from "decimal.js";
 import {
 	bootstrapSimulation,
 	restoreSimulation,
@@ -9,14 +8,13 @@ import {
 import {
 	createAlpacaClient,
 	hasAlpacaEnv,
-	type AlpacaClient,
+	type AlpacaDataType,
 } from "#/alpaca/client";
 import { loadBootstrapMarketData } from "#/alpaca/live-feed";
 import { db } from "#/db/index";
 import {
 	agentEvents as agentEventsTable,
 	agents as agentsTable,
-	divergenceLog as divergenceLogTable,
 	orders as ordersTable,
 	researchNotes as researchNotesTable,
 	simConfig as simConfigTable,
@@ -26,7 +24,10 @@ import { PublicationBus } from "#/engine/bus/PublicationBus";
 import { SimClock } from "#/engine/sim/SimClock";
 import { SimOrchestrator } from "#/engine/sim/SimOrchestrator";
 import { DEV_TICKERS, SIM_DEFAULTS } from "#/lib/constants";
-import { buildDefaultTraderDistribution } from "#/lib/simulation-session";
+import {
+	buildDefaultTraderDistribution,
+	deriveGroupCount,
+} from "#/lib/simulation-session";
 import {
 	researchAgent,
 	researchCycleResultSchema,
@@ -55,20 +56,59 @@ import {
 import { broadcaster } from "./ws/broadcaster";
 import { startSimWebSocketServer } from "./ws/SimWebSocketServer";
 
+function serializeRuntimeStateForBroadcast(
+	state: import("#/types/sim").SimRuntimeState,
+): import("#/types/sim").SimRuntimeStateData {
+	return {
+		isRunning: state.isRunning,
+		isTicking: state.isTicking,
+		simTick: state.simTick,
+		simulatedTime: state.simulatedTime,
+		activeGroupIndex: state.activeGroupIndex,
+		speedMultiplier: state.speedMultiplier,
+		tickIntervalMs: state.tickIntervalMs,
+		activeGroupSize: state.activeGroupSize,
+		symbolCount: state.symbolCount,
+		agentCount: state.agentCount,
+		lastSummary: state.lastSummary
+			? {
+					durationMs: state.lastSummary.durationMs,
+					orderCount: state.lastSummary.orderCount,
+					tradeCount: state.lastSummary.tradeCount,
+					activeAgents: state.lastSummary.activeAgents,
+					simTick: state.lastSummary.simTick,
+					simulatedTime: state.lastSummary.simulatedTime,
+					trades: state.lastSummary.trades.map((trade) => ({
+						id: trade.id,
+						buyOrderId: trade.buyOrderId,
+						sellOrderId: trade.sellOrderId,
+						buyerAgentId: trade.buyerAgentId,
+						sellerAgentId: trade.sellerAgentId,
+						symbol: trade.symbol,
+						price: trade.price.toNumber(),
+						qty: trade.qty,
+						tick: trade.tick,
+					})),
+					isRunning: state.lastSummary.isRunning,
+				}
+			: null,
+	};
+}
+
 function broadcastSimRuntimeState(
 	sessionId: string,
 	state: import("#/types/sim").SimRuntimeState,
 ): void {
 	const message: SimChannelMessage = {
 		type: "runtime_state",
-		payload: state,
+		payload: serializeRuntimeStateForBroadcast(state),
 	};
 	broadcaster.broadcast(buildSessionChannel("sim", sessionId), message);
 }
 
 function broadcastSessionStatus(
 	sessionId: string,
-	status: "completed" | "failed",
+	status: import("#/types/sim").SimulationSessionStatus,
 ): void {
 	const message: SimChannelMessage = {
 		type: "session_status_changed",
@@ -89,12 +129,13 @@ type ResearchAgentLike = {
 type SimulationRuntime = {
 	sessionId: string;
 	symbols: string[];
-	alpacaClient: AlpacaClient | null;
 	eventBus: EventBus;
 	publicationBus: PublicationBus;
 	researchWorkers: ResearchAgentWorker[];
 	orchestrator: SimOrchestrator;
 	nextTickAtMs: number;
+	activeGroupSize: number;
+	researchFrequency: number;
 	disposePromise: Promise<void> | null;
 };
 
@@ -255,24 +296,19 @@ function wireRuntimeBroadcasts(sessionId: string, eventBus: EventBus): void {
 	eventBus.on("sim-state", (state) => {
 		broadcastSimRuntimeState(sessionId, state);
 	});
-
-	eventBus.on(
-		"divergence",
-		(data: { symbol: string; divergencePct: number }) => {
-			emitWatchlistUpdate(data.symbol, {
-				divergencePct: data.divergencePct,
-			});
-		},
-	);
 }
 
-async function createBootstrapMarketData(symbols: string[]): Promise<{
-	alpacaClient: AlpacaClient | null;
+async function createBootstrapMarketData(
+	symbols: string[],
+	alpacaDataTypes: string[] = [...SIM_DEFAULTS.alpacaDataTypes],
+): Promise<{
 	marketData: Awaited<ReturnType<typeof loadBootstrapMarketData>> | null;
 }> {
 	if (!hasAlpacaEnv()) {
+		console.error(
+			"[SimRunner] Alpaca env vars missing (ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL); falling back to local seed prices.",
+		);
 		return {
-			alpacaClient: null,
 			marketData: null,
 		};
 	}
@@ -281,16 +317,18 @@ async function createBootstrapMarketData(symbols: string[]): Promise<{
 
 	try {
 		return {
-			alpacaClient,
-			marketData: await loadBootstrapMarketData(symbols, alpacaClient),
+			marketData: await loadBootstrapMarketData(
+				symbols,
+				alpacaClient,
+				alpacaDataTypes as AlpacaDataType[],
+			),
 		};
 	} catch (error) {
-		console.warn(
-			"[SimRunner] Alpaca bootstrap failed; falling back to local seed prices.",
+		console.error(
+			"[SimRunner] Alpaca bootstrap failed; falling back to local seed prices. Verify ALPACA_API_KEY and ALPACA_API_SECRET in .env.local.",
 			error,
 		);
 		return {
-			alpacaClient,
 			marketData: null,
 		};
 	}
@@ -300,8 +338,13 @@ function resolveSessionRuntimeConfig(session: RunnableSimulationSession): {
 	symbols: string[];
 	agentCount: number;
 	groupCount: number;
+	activeGroupSize: number;
 	tickIntervalMs: number;
 	simulatedTickDuration: number;
+	llmConcurrency: number;
+	llmTimeoutMs: number;
+	researchFrequency: number;
+	alpacaDataTypes: string[];
 	traderDistribution: ReturnType<typeof buildDefaultTraderDistribution>;
 } {
 	const symbols =
@@ -309,17 +352,24 @@ function resolveSessionRuntimeConfig(session: RunnableSimulationSession): {
 			? session.symbols
 			: DEV_TICKERS.map((ticker) => ticker.symbol);
 	const agentCount = session.agentCount ?? SIM_DEFAULTS.agentCount;
+	const activeGroupSize =
+		session.activeGroupSize ?? SIM_DEFAULTS.activeGroupSize;
 
 	return {
 		symbols,
 		agentCount,
-		groupCount: Math.min(
-			session.groupCount ?? SIM_DEFAULTS.groupCount,
-			agentCount,
-		),
+		activeGroupSize,
+		groupCount: deriveGroupCount(agentCount, activeGroupSize),
 		tickIntervalMs: session.tickIntervalMs ?? SIM_DEFAULTS.tickIntervalMs,
 		simulatedTickDuration:
 			session.simulatedTickDuration ?? SIM_DEFAULTS.simulatedTickDuration,
+		llmConcurrency: session.llmConcurrency ?? SIM_DEFAULTS.llmConcurrency,
+		llmTimeoutMs: session.llmTimeoutMs ?? SIM_DEFAULTS.llmTimeoutMs,
+		researchFrequency:
+			session.researchFrequency ?? SIM_DEFAULTS.researchFrequency,
+		alpacaDataTypes: session.alpacaDataTypes ?? [
+			...SIM_DEFAULTS.alpacaDataTypes,
+		],
 		traderDistribution:
 			session.traderDistribution ?? buildDefaultTraderDistribution(agentCount),
 	};
@@ -374,9 +424,10 @@ export async function disposeRuntime(
 	runtime.disposePromise = (async () => {
 		await waitForRuntimeToSettle(runtime);
 		await runtime.orchestrator.stop();
-		if (!isSuspended) {
-			broadcastSessionStatus(runtime.sessionId, "completed");
-		}
+		broadcastSessionStatus(
+			runtime.sessionId,
+			isSuspended ? "suspended" : "completed",
+		);
 		await waitForRuntimeToSettle(runtime);
 		runtime.eventBus.removeAllListeners();
 		runtime.publicationBus.clear();
@@ -459,11 +510,19 @@ async function bootstrapSimulationRuntime(
 		symbols,
 		agentCount,
 		groupCount,
+		activeGroupSize,
 		tickIntervalMs,
 		simulatedTickDuration,
+		llmConcurrency,
+		llmTimeoutMs,
+		researchFrequency,
+		alpacaDataTypes,
 		traderDistribution,
 	} = resolveSessionRuntimeConfig(session);
-	const { alpacaClient, marketData } = await createBootstrapMarketData(symbols);
+	const { marketData } = await createBootstrapMarketData(
+		symbols,
+		alpacaDataTypes,
+	);
 	const bootstrap = await bootstrapSimulation({
 		sessionId,
 		symbols,
@@ -493,6 +552,8 @@ async function bootstrapSimulationRuntime(
 			groupCount,
 			sessionId,
 			tickIntervalMs,
+			llmConcurrency,
+			llmTimeoutMs,
 		},
 	);
 
@@ -500,6 +561,7 @@ async function bootstrapSimulationRuntime(
 	await markSimulationSessionActive(sessionId);
 	await orchestrator.start();
 	broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
+	broadcastSessionStatus(sessionId, "active");
 
 	logRuntimeEvent(
 		sessionId,
@@ -509,12 +571,13 @@ async function bootstrapSimulationRuntime(
 	return {
 		sessionId,
 		symbols,
-		alpacaClient,
 		eventBus,
 		publicationBus,
 		researchWorkers: bootstrap.researchWorkers,
 		orchestrator,
 		nextTickAtMs: Date.now(),
+		activeGroupSize,
+		researchFrequency,
 		disposePromise: null,
 	};
 }
@@ -527,8 +590,12 @@ async function resumeSimulationRuntime(
 		symbols,
 		agentCount,
 		groupCount,
+		activeGroupSize,
 		tickIntervalMs,
 		simulatedTickDuration,
+		llmConcurrency,
+		llmTimeoutMs,
+		researchFrequency,
 		traderDistribution,
 	} = resolveSessionRuntimeConfig(session);
 	const persistedState = await loadPersistedSessionState(sessionId);
@@ -559,6 +626,7 @@ async function resumeSimulationRuntime(
 					currentCash: row.currentCash,
 					currentNav: row.currentNav,
 					positions: row.positions ?? {},
+					realizedPnl: (row.realizedPnl as Record<string, number> | null) ?? {},
 					lastAutopilotDirective:
 						(row.lastAutopilotDirective as AutopilotDirective | null) ?? null,
 					llmGroup: row.llmGroup,
@@ -606,6 +674,8 @@ async function resumeSimulationRuntime(
 			groupCount,
 			sessionId,
 			tickIntervalMs: restored.runtimeState.tickIntervalMs,
+			llmConcurrency,
+			llmTimeoutMs,
 		},
 	);
 	orchestrator.hydrateRuntimeState({
@@ -618,6 +688,7 @@ async function resumeSimulationRuntime(
 
 	wireRuntimeBroadcasts(sessionId, eventBus);
 	broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
+	broadcastSessionStatus(sessionId, "active");
 	logRuntimeEvent(
 		sessionId,
 		`resumed tick=${restored.runtimeState.currentTick} running=${restored.runtimeState.isRunning} openOrders=${persistedState.openOrders.length}`,
@@ -626,12 +697,13 @@ async function resumeSimulationRuntime(
 	return {
 		sessionId,
 		symbols,
-		alpacaClient: hasAlpacaEnv() ? createAlpacaClient() : null,
 		eventBus,
 		publicationBus,
 		researchWorkers: restored.researchWorkers,
 		orchestrator,
 		nextTickAtMs: Date.now(),
+		activeGroupSize,
+		researchFrequency,
 		disposePromise: null,
 	};
 }
@@ -696,90 +768,11 @@ export function selectPendingSessionsToBootstrap(input: {
 		.slice(0, availableCapacity);
 }
 
-export function buildDivergenceRows(input: {
-	sessionId: string;
-	tick: number;
-	referencePrices: Map<string, Decimal>;
-	quotes: Map<
-		string,
-		{
-			lastPrice: number | null;
-			midPrice: number | null;
-			bidPrice: number | null;
-			askPrice: number | null;
-		}
-	>;
-}) {
-	return Array.from(input.referencePrices.entries()).flatMap(
-		([symbol, simPrice]) => {
-			const quote = input.quotes.get(symbol);
-			const realPrice =
-				quote?.lastPrice ??
-				quote?.midPrice ??
-				quote?.bidPrice ??
-				quote?.askPrice;
-
-			if (realPrice === null || realPrice === undefined || realPrice <= 0) {
-				return [];
-			}
-
-			const simPriceNumber = simPrice.toNumber();
-			const divergencePct = Number(
-				new Decimal(simPriceNumber)
-					.minus(realPrice)
-					.div(realPrice)
-					.mul(100)
-					.toDecimalPlaces(4)
-					.toString(),
-			);
-
-			return [
-				{
-					sessionId: input.sessionId,
-					tick: input.tick,
-					symbol,
-					simPrice: simPriceNumber,
-					realPrice,
-					divergencePct,
-				},
-			];
-		},
-	);
-}
-
-async function persistDivergenceLog(runtime: SimulationRuntime): Promise<void> {
-	if (!runtime.alpacaClient) {
-		return;
-	}
-
-	try {
-		const quotes = await runtime.alpacaClient.getLatestQuotes(runtime.symbols);
-		const rows = buildDivergenceRows({
-			sessionId: runtime.sessionId,
-			tick: runtime.orchestrator.getRuntimeState().simTick,
-			referencePrices: runtime.orchestrator.getReferencePrices(),
-			quotes,
-		});
-
-		if (rows.length > 0) {
-			await db.insert(divergenceLogTable).values(rows);
-			for (const row of rows) {
-				runtime.eventBus.emit("divergence", {
-					symbol: row.symbol,
-					divergencePct: row.divergencePct,
-				});
-			}
-		}
-	} catch (error) {
-		console.warn(
-			`[SimRunner] Failed to persist divergence log for session ${runtime.sessionId}:`,
-			error,
-		);
-	}
-}
-
-export function shouldRunResearchCycle(simTick: number): boolean {
-	return simTick > 0 && simTick % 20 === 0;
+export function shouldRunResearchCycle(
+	simTick: number,
+	frequency: number = 20,
+): boolean {
+	return simTick > 0 && simTick % frequency === 0;
 }
 
 function buildResearchPrompt(
@@ -801,8 +794,9 @@ export async function runResearchCycle(
 	eventBus: EventBus,
 	sessionId: string,
 	agent: ResearchAgentLike = researchAgent,
+	frequency: number = 20,
 ): Promise<void> {
-	if (!shouldRunResearchCycle(simTick) || workers.length === 0) {
+	if (!shouldRunResearchCycle(simTick, frequency) || workers.length === 0) {
 		return;
 	}
 
@@ -881,13 +875,14 @@ async function processRuntimeCycle(
 						logRuntimeEvent(sessionId, message);
 					}
 					broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
-					await persistDivergenceLog(runtime);
 					await runResearchCycle(
 						researchWorkers,
 						orchestrator.getRuntimeState().simTick,
 						publicationBus,
 						eventBus,
 						sessionId,
+						researchAgent,
+						runtime.researchFrequency,
 					);
 					logTickSummary(sessionId, summary);
 				} catch (error) {
@@ -912,13 +907,14 @@ async function processRuntimeCycle(
 			logRuntimeEvent(sessionId, message);
 		}
 		broadcastSimRuntimeState(sessionId, orchestrator.getRuntimeState());
-		await persistDivergenceLog(runtime);
 		await runResearchCycle(
 			researchWorkers,
 			orchestrator.getRuntimeState().simTick,
 			publicationBus,
 			eventBus,
 			sessionId,
+			researchAgent,
+			runtime.researchFrequency,
 		);
 		logTickSummary(sessionId, summary);
 	} catch (error) {

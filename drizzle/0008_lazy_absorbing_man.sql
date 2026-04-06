@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "realized_pnl" jsonb DEFAULT '{}'::jsonb;

@@ -2,6 +2,7 @@ import type { InferInsertModel } from "drizzle-orm";
 import type { AgentRegistryEntry } from "#/agents/AgentRegistry";
 import { agents as agentsTable } from "#/db/schema";
 import type { Position } from "#/types/agent";
+import Decimal from "decimal.js";
 
 type AgentRecord = InferInsertModel<typeof agentsTable>;
 
@@ -24,7 +25,20 @@ function serializePositions(
 	);
 }
 
-function serializeModelId(model: AgentRegistryEntry["config"]["model"]): string | null {
+function serializeRealizedPnl(
+	realizedPnl: Map<string, Decimal>,
+): Record<string, number> {
+	return Object.fromEntries(
+		Array.from(realizedPnl.entries(), ([symbol, pnl]) => [
+			symbol,
+			pnl.toNumber(),
+		]),
+	);
+}
+
+function serializeModelId(
+	model: AgentRegistryEntry["config"]["model"],
+): string | null {
 	if (typeof model === "string") {
 		return model;
 	}
@@ -66,6 +80,7 @@ export function serializeAgentEntryForDb(
 	| "currentNav"
 	| "positions"
 	| "parameters"
+	| "realizedPnl"
 	| "lastAutopilotDirective"
 	| "llmGroup"
 > {
@@ -86,6 +101,7 @@ export function serializeAgentEntryForDb(
 		currentNav: entry.state.nav.toNumber(),
 		positions: serializePositions(entry.state.positions),
 		parameters: { ...entry.config.decisionParams },
+		realizedPnl: serializeRealizedPnl(entry.state.realizedPnl),
 		lastAutopilotDirective: entry.state.lastAutopilotDirective
 			? structuredClone(entry.state.lastAutopilotDirective)
 			: null,
@@ -97,5 +113,7 @@ export function serializeAgentEntriesForDb(
 	entries: Iterable<AgentRegistryEntry>,
 	sessionId: string,
 ): ReturnType<typeof serializeAgentEntryForDb>[] {
-	return Array.from(entries, (entry) => serializeAgentEntryForDb(entry, sessionId));
+	return Array.from(entries, (entry) =>
+		serializeAgentEntryForDb(entry, sessionId),
+	);
 }

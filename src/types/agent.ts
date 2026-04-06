@@ -1,6 +1,6 @@
 import type { MastraModelConfig } from "@mastra/core/llm";
 import type Decimal from "decimal.js";
-import type { Order } from "#/types/market";
+import type { Order, Trade } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 
 // ── Agent Tiers ──
@@ -75,6 +75,8 @@ export interface AgentState {
 	researchInbox: Map<string, ResearchNote>;
 	lastAutopilotDirective: AutopilotDirective | null;
 	lastLlmTick: number | null;
+	realizedPnl: Map<string, Decimal>;
+	pendingFills: Trade[];
 }
 
 export interface AutopilotExecutionResult {

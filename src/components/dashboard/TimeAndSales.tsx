@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
 import { useTradesFeed } from "#/hooks/useTradesFeed";
 
@@ -16,10 +17,7 @@ function fmtQty(value: number) {
 export function TimeAndSales() {
 	const { symbol } = useSymbolSelection();
 	const { trades } = useTradesFeed(symbol);
-	const displayTrades = useMemo(
-		() => trades.slice(0, 100).reverse(),
-		[trades],
-	);
+	const displayTrades = useMemo(() => trades.slice(0, 100).reverse(), [trades]);
 
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const virtualizer = useVirtualizer({
@@ -43,9 +41,12 @@ export function TimeAndSales() {
 				<span className="text-xs font-semibold text-(--terminal-text)">
 					Time &amp; Sales
 				</span>
-				<span className="text-[10px] text-(--terminal-text-muted)">
-					{symbol} · {trades.length} trades
-				</span>
+				<div className="flex items-center gap-1.5">
+					<span className="text-[10px] text-(--terminal-text-muted)">
+						{symbol} · {trades.length} trades
+					</span>
+					<MaximizeButton panelId="timeAndSales" />
+				</div>
 			</div>
 
 			<div className="flex items-center border-b border-(--terminal-border) px-2 py-[3px] shrink-0">

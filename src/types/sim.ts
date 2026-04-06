@@ -68,6 +68,7 @@ export interface SimRuntimeStateData {
 export type SimulationSessionStatus =
 	| "pending"
 	| "active"
+	| "suspended"
 	| "completed"
 	| "failed"
 	| "deleting";
@@ -80,8 +81,13 @@ export interface SimulationSessionSummary {
 	seed: number;
 	agentCount: number;
 	groupCount: number;
+	activeGroupSize: number;
 	tickIntervalMs: number;
 	simulatedTickDuration: number;
+	llmConcurrency: number;
+	llmTimeoutMs: number;
+	researchFrequency: number;
+	alpacaDataTypes: string[];
 	traderDistribution: TraderDistribution;
 	currentTick: number;
 	createdAt: Date | null;
@@ -93,7 +99,6 @@ export interface SimulationSessionSummary {
 export interface SessionWatchlistEntry {
 	lastBar: OHLCVBarData | null;
 	snapshot: LOBSnapshotData | null;
-	divergencePct?: number | null;
 }
 
 export interface SessionDashboardHydration {
@@ -308,7 +313,7 @@ export type AgentEvent =
 
 export interface StagedOrderResult {
 	order: Order;
-	source: "autopilot" | "llm";
+	source: "autopilot" | "llm" | "market-maker-requote";
 	agentName: string;
 	reasoning: string | null;
 }

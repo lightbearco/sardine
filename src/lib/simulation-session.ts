@@ -25,16 +25,17 @@ export interface TraderDistribution {
 	depthProvider: number;
 }
 
-export const TRADER_DISTRIBUTION_LABELS: Record<TraderDistributionKey, string> = {
-	tier1: "Tier 1 Institutions",
-	hedgeFund: "Hedge Funds",
-	marketMaker: "Market Makers",
-	pension: "Pensions",
-	momentum: "Momentum Traders",
-	value: "Value Investors",
-	noise: "Noise Traders",
-	depthProvider: "Depth Providers",
-};
+export const TRADER_DISTRIBUTION_LABELS: Record<TraderDistributionKey, string> =
+	{
+		tier1: "Tier 1 Institutions",
+		hedgeFund: "Hedge Funds",
+		marketMaker: "Market Makers",
+		pension: "Pensions",
+		momentum: "Momentum Traders",
+		value: "Value Investors",
+		noise: "Noise Traders",
+		depthProvider: "Depth Providers",
+	};
 
 const TRADER_DISTRIBUTION_WEIGHTS: Record<
 	Exclude<TraderDistributionKey, "tier1">,
@@ -60,6 +61,22 @@ export const traderDistributionSchema = z.object({
 	depthProvider: z.number().int().min(0),
 });
 
+export const ALPACA_DATA_TYPE_OPTIONS = [
+	"quotes",
+	"bars",
+	"trades",
+	"snapshots",
+] as const;
+
+export type AlpacaDataTypeOption = (typeof ALPACA_DATA_TYPE_OPTIONS)[number];
+
+export const ALPACA_DATA_TYPE_LABELS: Record<AlpacaDataTypeOption, string> = {
+	quotes: "Quotes",
+	bars: "Daily Bars",
+	trades: "Trades",
+	snapshots: "Snapshots",
+};
+
 export const createSimulationSessionInputSchema = z
 	.object({
 		symbolCount: z.number().int().min(1).max(DEV_TICKERS.length),
@@ -68,6 +85,28 @@ export const createSimulationSessionInputSchema = z
 		tickIntervalMs: z.number().int().min(0).max(60_000),
 		simulatedTickDuration: z.number().int().min(1).max(3_600),
 		traderDistribution: traderDistributionSchema,
+		llmConcurrency: z
+			.number()
+			.int()
+			.min(1)
+			.max(50)
+			.default(SIM_DEFAULTS.llmConcurrency),
+		llmTimeoutMs: z
+			.number()
+			.int()
+			.min(1000)
+			.max(60_000)
+			.default(SIM_DEFAULTS.llmTimeoutMs),
+		researchFrequency: z
+			.number()
+			.int()
+			.min(1)
+			.max(100)
+			.default(SIM_DEFAULTS.researchFrequency),
+		alpacaDataTypes: z
+			.array(z.enum(ALPACA_DATA_TYPE_OPTIONS))
+			.nonempty()
+			.default(["snapshots"] as AlpacaDataTypeOption[]),
 	})
 	.superRefine((input, context) => {
 		if (input.activeGroupSize > input.agentCount) {
@@ -91,10 +130,9 @@ export type CreateSimulationSessionInput = z.infer<
 	typeof createSimulationSessionInputSchema
 >;
 
-function allocateCounts(total: number): Record<
-	Exclude<TraderDistributionKey, "tier1">,
-	number
-> {
+function allocateCounts(
+	total: number,
+): Record<Exclude<TraderDistributionKey, "tier1">, number> {
 	const keys = Object.keys(TRADER_DISTRIBUTION_WEIGHTS) as Array<
 		Exclude<TraderDistributionKey, "tier1">
 	>;
@@ -142,7 +180,9 @@ function allocateCounts(total: number): Record<
 	return result;
 }
 
-export function buildDefaultTraderDistribution(agentCount: number): TraderDistribution {
+export function buildDefaultTraderDistribution(
+	agentCount: number,
+): TraderDistribution {
 	const tier1 = Math.min(2, Math.max(0, agentCount));
 	const remaining = Math.max(0, agentCount - tier1);
 	const allocated = allocateCounts(remaining);
@@ -153,7 +193,9 @@ export function buildDefaultTraderDistribution(agentCount: number): TraderDistri
 	};
 }
 
-export function sumTraderDistribution(distribution: TraderDistribution): number {
+export function sumTraderDistribution(
+	distribution: TraderDistribution,
+): number {
 	return TRADER_DISTRIBUTION_KEYS.reduce(
 		(total, key) => total + distribution[key],
 		0,
@@ -178,6 +220,12 @@ export function buildDefaultSimulationSessionInput(): CreateSimulationSessionInp
 		activeGroupSize: SIM_DEFAULTS.activeGroupSize,
 		tickIntervalMs: SIM_DEFAULTS.tickIntervalMs,
 		simulatedTickDuration: SIM_DEFAULTS.simulatedTickDuration,
+		llmConcurrency: SIM_DEFAULTS.llmConcurrency,
+		llmTimeoutMs: SIM_DEFAULTS.llmTimeoutMs,
+		researchFrequency: SIM_DEFAULTS.researchFrequency,
+		alpacaDataTypes: [
+			...SIM_DEFAULTS.alpacaDataTypes,
+		] as AlpacaDataTypeOption[],
 		traderDistribution: buildDefaultTraderDistribution(SIM_DEFAULTS.agentCount),
 	};
 }

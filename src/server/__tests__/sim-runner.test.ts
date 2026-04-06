@@ -17,7 +17,7 @@ describe("sim-runner research scheduling", () => {
 		vi.clearAllMocks();
 	});
 
-	it("only runs research on ticks divisible by 20", async () => {
+	it("only runs research on ticks divisible by the configured frequency", async () => {
 		const { runResearchCycle, shouldRunResearchCycle } = await import(
 			"../sim-runner"
 		);
@@ -31,6 +31,8 @@ describe("sim-runner research scheduling", () => {
 
 		expect(shouldRunResearchCycle(19)).toBe(false);
 		expect(shouldRunResearchCycle(20)).toBe(true);
+		expect(shouldRunResearchCycle(9, 10)).toBe(false);
+		expect(shouldRunResearchCycle(10, 10)).toBe(true);
 
 		await runResearchCycle(
 			workers,
@@ -90,8 +92,14 @@ describe("sim-runner research scheduling", () => {
 				["MSFT", new Decimal(95)],
 			]),
 			quotes: new Map([
-				["AAPL", { lastPrice: 100, midPrice: null, bidPrice: null, askPrice: null }],
-				["MSFT", { lastPrice: null, midPrice: null, bidPrice: null, askPrice: null }],
+				[
+					"AAPL",
+					{ lastPrice: 100, midPrice: null, bidPrice: null, askPrice: null },
+				],
+				[
+					"MSFT",
+					{ lastPrice: null, midPrice: null, bidPrice: null, askPrice: null },
+				],
 			]),
 		});
 

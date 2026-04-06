@@ -1,5 +1,6 @@
 import { memo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { useSessionDashboard } from "#/hooks/useSessionDashboard";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
 import { useWatchlistSummary } from "#/hooks/useWatchlistSummary";
@@ -17,13 +18,6 @@ function fmtVol(value: number) {
 	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
 	return String(value);
-}
-
-function divergenceColor(pct: number): string {
-	const abs = Math.abs(pct);
-	if (abs < 1) return "var(--terminal-green)";
-	if (abs < 3) return "#eab308";
-	return "var(--terminal-red)";
 }
 
 const WatchlistRow = memo(function WatchlistRow({
@@ -148,9 +142,12 @@ export function Watchlist() {
 				<span className="text-xs font-semibold text-[var(--terminal-text)]">
 					Watchlist
 				</span>
-				<span className="text-[10px] text-[var(--terminal-text-muted)]">
-					{tickers.length} symbols
-				</span>
+				<div className="flex items-center gap-1.5">
+					<span className="text-[10px] text-[var(--terminal-text-muted)]">
+						{tickers.length} symbols
+					</span>
+					<MaximizeButton panelId="watchlist" />
+				</div>
 			</div>
 			<div ref={parentRef} className="min-h-0 flex-1 overflow-auto px-2 py-1">
 				<div

@@ -65,6 +65,8 @@ function registerCounterparty(
 		researchInbox: new Map(),
 		lastAutopilotDirective: null,
 		lastLlmTick: null,
+		realizedPnl: new Map(),
+		pendingFills: [],
 		...stateOverrides,
 	};
 
@@ -114,34 +116,25 @@ describe("trading agent deterministic integration", () => {
 		requestContext.set("sim-tick", 1);
 
 		const beforeMarket = unwrapToolResult(
-			await marketDataTool.execute?.(
-				{ symbol: "AAPL" },
-				{ requestContext },
-			),
+			await marketDataTool.execute?.({ symbol: "AAPL" }, { requestContext }),
 		);
 		const beforePortfolio = unwrapToolResult(
-			await portfolioTool.execute?.(
-				{},
-				{ requestContext },
-			),
+			await portfolioTool.execute?.({}, { requestContext }),
 		);
 		const order = unwrapToolResult(
 			await orderTool.execute?.(
 				{
 					side: "buy",
 					type: "limit",
-				symbol: "AAPL",
-				price: 99,
-				qty: 10,
-			},
+					symbol: "AAPL",
+					price: 99,
+					qty: 10,
+				},
 				{ requestContext },
 			),
 		);
 		const afterPortfolio = unwrapToolResult(
-			await portfolioTool.execute?.(
-				{},
-				{ requestContext },
-			),
+			await portfolioTool.execute?.({}, { requestContext }),
 		);
 
 		expect(beforeMarket.symbol).toBe("AAPL");

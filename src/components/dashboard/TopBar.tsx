@@ -9,7 +9,7 @@ import {
 	Trash2Icon,
 	XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { DeleteSimulationDialog } from "#/components/dashboard/DeleteSimulationDialog";
 import { Button } from "#/components/ui/button";
@@ -54,46 +54,63 @@ export function TopBar() {
 	const [isConfigOpen, setIsConfigOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [isDeleting, setIsDeleting] = useState(false);
+	const [isPausing, setIsPausing] = useState(false);
 	const ticker = DEV_TICKERS.find((item) => item.symbol === symbol);
 	const latencyMs = simState?.lastSummary?.durationMs;
-	const isRunning = simState?.isRunning ?? false;
+	const isRunning = (simState?.isRunning ?? false) && !isPausing;
 	const isDeletingSession = session.status === "deleting";
-	const toggleLabel = isRunning ? "Pause Simulation" : "Play Simulation";
-	const toggleAction = isRunning ? pause : play;
 	const hasRuntime = simState !== null;
 	const isControllableLiveSession =
 		session.status === "active" && isLive && hasRuntime && isConnected;
 	const canTogglePlayback = isControllableLiveSession;
 	const canStep = isControllableLiveSession && !isRunning;
 	const canAdjustSpeed = isControllableLiveSession;
+
+	useEffect(() => {
+		if (!simState?.isRunning) {
+			setIsPausing(false);
+		}
+	}, [simState?.isRunning]);
+
+	const handleTogglePlayback = async () => {
+		if (isRunning) {
+			setIsPausing(true);
+		}
+		await (isRunning ? pause : play)();
+	};
+
 	const statusLabel =
 		session.status === "deleting"
 			? "Deleting"
 			: session.status === "completed" || session.status === "failed"
-			? "Historical"
-			: session.status === "pending"
-				? "Queued"
-				: !isConnected
-					? "Disconnected"
-					: isRunning
-						? "Running"
-						: "Paused";
+				? "Historical"
+				: session.status === "pending"
+					? "Queued"
+					: session.status === "suspended"
+						? "Suspended"
+						: !isConnected
+							? "Disconnected"
+							: isRunning
+								? "Running"
+								: "Paused";
 	const statusClassName =
 		statusLabel === "Running"
 			? "border-transparent bg-primary/15 text-primary-foreground"
 			: statusLabel === "Deleting"
 				? "border-red-500/30 bg-red-500/10 text-red-200"
-			: statusLabel === "Queued"
-				? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-				: "border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text-muted)]";
+				: statusLabel === "Queued" || statusLabel === "Suspended"
+					? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+					: "border-[var(--terminal-border)] bg-[var(--terminal-bg)] text-[var(--terminal-text-muted)]";
 	const statusHint =
 		session.status === "deleting"
 			? "Session delete is in progress. Runtime cleanup finishes before the data is removed."
 			: session.status === "pending"
-			? "Queued for the runner. It will start when capacity is available."
-			: session.status === "active" && !isConnected
-				? "Simulation runner is offline. Start the sim worker and this active session will auto-resume."
-				: null;
+				? "Queued for the runner. It will start when capacity is available."
+				: session.status === "suspended"
+					? "Temporarily paused for capacity. Will auto-resume."
+					: session.status === "active" && !isConnected
+						? "Simulation runner is offline. Start the sim worker and this active session will auto-resume."
+						: null;
 
 	async function handleDeleteSession() {
 		setIsDeleting(true);
@@ -181,8 +198,8 @@ export function TopBar() {
 						size="sm"
 						variant="ghost"
 						disabled={!canTogglePlayback}
-						onClick={() => void toggleAction()}
-						aria-label={toggleLabel}
+						onClick={() => void handleTogglePlayback()}
+						aria-label={isRunning ? "Pause Simulation" : "Play Simulation"}
 					>
 						{isRunning ? (
 							<PauseIcon className="mr-1.5 size-4" />

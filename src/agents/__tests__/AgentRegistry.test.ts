@@ -72,6 +72,8 @@ function makeState(overrides: Partial<AgentState> = {}): AgentState {
 			holdPositions: ["AAPL"],
 		},
 		lastLlmTick: 10,
+		realizedPnl: new Map(),
+		pendingFills: [],
 		...overrides,
 	};
 }
@@ -280,7 +282,7 @@ describe("AgentRegistry", () => {
 			false,
 		);
 
-	const rows = registry.toPersistenceRows("test-session");
+		const rows = registry.toPersistenceRows("test-session");
 		expect(rows).toEqual([
 			expect.objectContaining({
 				id: "agent-1",

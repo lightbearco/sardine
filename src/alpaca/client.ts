@@ -2,17 +2,16 @@ import Alpaca from "@alpacahq/alpaca-trade-api";
 import type {
 	AlpacaBar,
 	AlpacaQuote,
+	AlpacaSnapshot,
+	AlpacaTrade,
 } from "@alpacahq/alpaca-trade-api/dist/resources/datav2/entityv2";
-import {
-	getAlpacaEnv,
-	hasAlpacaEnv,
-	type AlpacaEnv,
-} from "#/env";
+import { getAlpacaEnv, hasAlpacaEnv, type AlpacaEnv } from "#/env";
 
-export type AlpacaBarTimeframe = "1Day";
+export type AlpacaBarTimeframe = "1Day" | "1Hour" | "15Min" | "5Min" | "1Min";
+
+export type AlpacaDataType = "quotes" | "bars" | "trades" | "snapshots";
 
 const ALPACA_STOCK_DATA_URL = "https://data.alpaca.markets";
-const ALPACA_FREE_STOCK_FEED = "iex";
 
 export interface AlpacaQuoteSnapshot {
 	symbol: string;
@@ -32,6 +31,23 @@ export interface AlpacaBarSnapshot {
 	close: number;
 	volume: number;
 	timestamp: string;
+}
+
+export interface AlpacaTradeSnapshot {
+	symbol: string;
+	price: number;
+	size: number;
+	timestamp: string;
+	exchange: string;
+	conditions: string[];
+}
+
+export interface AlpacaMarketSnapshot {
+	symbol: string;
+	dailyBar: AlpacaBarSnapshot | null;
+	dailyTrade: AlpacaTradeSnapshot | null;
+	dailyQuote: AlpacaQuoteSnapshot | null;
+	prevDailyBar: AlpacaBarSnapshot | null;
 }
 
 export interface AlpacaOrderInput {
@@ -61,6 +77,8 @@ export interface AlpacaClient {
 		timeframe: AlpacaBarTimeframe,
 		limit: number,
 	): Promise<Map<string, AlpacaBarSnapshot[]>>;
+	getLatestTrades(symbols: string[]): Promise<Map<string, AlpacaTradeSnapshot>>;
+	getSnapshots(symbols: string[]): Promise<Map<string, AlpacaMarketSnapshot>>;
 	submitOrder(order: AlpacaOrderInput): Promise<AlpacaOrderResult>;
 }
 
@@ -89,7 +107,10 @@ function resolveMidPrice(input: {
 	return bidPrice ?? askPrice ?? null;
 }
 
-function normalizeQuote(symbol: string, quote: AlpacaQuote | undefined): AlpacaQuoteSnapshot {
+function normalizeQuote(
+	symbol: string,
+	quote: AlpacaQuote | undefined,
+): AlpacaQuoteSnapshot {
 	if (!quote) {
 		return {
 			symbol,
@@ -133,6 +154,46 @@ function normalizeBar(bar: AlpacaBar): AlpacaBarSnapshot {
 	};
 }
 
+function normalizeTrade(trade: AlpacaTrade): AlpacaTradeSnapshot {
+	return {
+		symbol: trade.Symbol,
+		price: trade.Price,
+		size: trade.Size,
+		timestamp: trade.Timestamp,
+		exchange: trade.Exchange,
+		conditions: trade.Conditions ?? [],
+	};
+}
+
+function normalizeSnapshot(
+	symbol: string,
+	snapshot: AlpacaSnapshot | undefined,
+): AlpacaMarketSnapshot {
+	if (!snapshot) {
+		return {
+			symbol,
+			dailyBar: null,
+			dailyTrade: null,
+			dailyQuote: null,
+			prevDailyBar: null,
+		};
+	}
+
+	return {
+		symbol,
+		dailyBar: snapshot.DailyBar ? normalizeBar(snapshot.DailyBar) : null,
+		dailyTrade: snapshot.LatestTrade
+			? normalizeTrade(snapshot.LatestTrade)
+			: null,
+		dailyQuote: snapshot.LatestQuote
+			? normalizeQuote(symbol, snapshot.LatestQuote)
+			: null,
+		prevDailyBar: snapshot.PrevDailyBar
+			? normalizeBar(snapshot.PrevDailyBar)
+			: null,
+	};
+}
+
 async function dataRequest<TResponse>(input: {
 	env: AlpacaEnv;
 	path: string;
@@ -152,9 +213,9 @@ async function dataRequest<TResponse>(input: {
 	});
 
 	if (!response.ok) {
-		const body = (await response.json().catch(() => null)) as
-			| { message?: string }
-			| null;
+		const body = (await response.json().catch(() => null)) as {
+			message?: string;
+		} | null;
 		throw new Error(
 			`code: ${response.status}, message: ${body?.message ?? response.statusText}`,
 		);
@@ -169,7 +230,6 @@ function createSdk(env: AlpacaEnv): AlpacaSdkLike {
 		secretKey: env.ALPACA_API_SECRET,
 		paper: env.ALPACA_BASE_URL.includes("paper"),
 		baseUrl: env.ALPACA_BASE_URL,
-		feed: ALPACA_FREE_STOCK_FEED,
 	}) as unknown as AlpacaSdkLike;
 }
 
@@ -189,12 +249,14 @@ export function createAlpacaClient(
 				path: "/v2/stocks/quotes/latest",
 				query: {
 					symbols: symbols.join(","),
-					feed: ALPACA_FREE_STOCK_FEED,
 				},
 			});
 			const quoteMap = new Map(Object.entries(response.quotes ?? {}));
 			return new Map(
-				symbols.map((symbol) => [symbol, normalizeQuote(symbol, quoteMap.get(symbol))]),
+				symbols.map((symbol) => [
+					symbol,
+					normalizeQuote(symbol, quoteMap.get(symbol)),
+				]),
 			);
 		},
 
@@ -210,13 +272,61 @@ export function createAlpacaClient(
 				start: start.toISOString(),
 				end: end.toISOString(),
 				limit,
-				feed: ALPACA_FREE_STOCK_FEED,
 			});
 
 			return new Map(
 				symbols.map((symbol) => [
 					symbol,
 					(bars.get(symbol) ?? []).map(normalizeBar).slice(-limit),
+				]),
+			);
+		},
+
+		async getLatestTrades(symbols) {
+			const response = await dataRequest<{
+				trades?: Record<string, AlpacaTrade>;
+			}>({
+				env,
+				path: "/v2/stocks/trades/latest",
+				query: {
+					symbols: symbols.join(","),
+				},
+			});
+			const tradeMap = new Map(Object.entries(response.trades ?? {}));
+			return new Map(
+				symbols.map((symbol) => [
+					symbol,
+					normalizeTrade(
+						tradeMap.get(symbol) ?? {
+							Symbol: symbol,
+							Price: 0,
+							Size: 0,
+							Timestamp: "",
+							Exchange: "",
+							Conditions: [],
+							ID: 0,
+							Tape: "",
+						},
+					),
+				]),
+			);
+		},
+
+		async getSnapshots(symbols) {
+			const response = await dataRequest<{
+				snapshots?: Record<string, AlpacaSnapshot>;
+			}>({
+				env,
+				path: "/v2/stocks/snapshots",
+				query: {
+					symbols: symbols.join(","),
+				},
+			});
+			const snapshotMap = new Map(Object.entries(response.snapshots ?? {}));
+			return new Map(
+				symbols.map((symbol) => [
+					symbol,
+					normalizeSnapshot(symbol, snapshotMap.get(symbol)),
 				]),
 			);
 		},
@@ -228,9 +338,7 @@ export function createAlpacaClient(
 				side: order.side,
 				type: order.type,
 				time_in_force: "day",
-				...(order.type === "limit"
-					? { limit_price: order.limitPrice }
-					: {}),
+				...(order.type === "limit" ? { limit_price: order.limitPrice } : {}),
 				...(order.clientOrderId
 					? { client_order_id: order.clientOrderId }
 					: {}),
@@ -252,7 +360,7 @@ export function createAlpacaClient(
 						: Number(result.qty),
 				limitPrice:
 					result.limit_price === undefined || result.limit_price === null
-						? order.limitPrice ?? null
+						? (order.limitPrice ?? null)
 						: Number(result.limit_price),
 			};
 		},

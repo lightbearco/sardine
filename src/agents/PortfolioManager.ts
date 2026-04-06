@@ -15,7 +15,6 @@ export class PortfolioManager {
 			const buyerEntry = registry.get(trade.buyerAgentId);
 			const sellerEntry = registry.get(trade.sellerAgentId);
 
-			// Skip trades involving unregistered agents (e.g. seed liquidity "market-maker-seed")
 			if (!buyerEntry && !sellerEntry) continue;
 
 			if (trade.buyerAgentId === trade.sellerAgentId) {
@@ -30,6 +29,7 @@ export class PortfolioManager {
 				buyerEntry.state.cash = buyerEntry.state.cash.minus(notional);
 				this.applyPositionDelta(
 					buyerEntry.state.positions,
+					buyerEntry.state.realizedPnl,
 					trade.symbol,
 					trade.qty,
 					trade.price,
@@ -41,6 +41,7 @@ export class PortfolioManager {
 				sellerEntry.state.cash = sellerEntry.state.cash.plus(notional);
 				this.applyPositionDelta(
 					sellerEntry.state.positions,
+					sellerEntry.state.realizedPnl,
 					trade.symbol,
 					-trade.qty,
 					trade.price,
@@ -62,6 +63,7 @@ export class PortfolioManager {
 
 	private applyPositionDelta(
 		positions: Map<string, Position>,
+		realizedPnl: Map<string, Decimal>,
 		symbol: string,
 		deltaQty: number,
 		tradePrice: Decimal,
@@ -75,6 +77,13 @@ export class PortfolioManager {
 		const nextQty = currentQty + deltaQty;
 
 		if (nextQty === 0) {
+			if (current) {
+				this.accumulateRealizedPnl(
+					realizedPnl,
+					symbol,
+					tradePrice.minus(current.avgCost).times(Math.abs(currentQty)),
+				);
+			}
 			positions.delete(symbol);
 			return;
 		}
@@ -100,6 +109,13 @@ export class PortfolioManager {
 			return;
 		}
 
+		const closedQty = Math.min(Math.abs(deltaQty), Math.abs(currentQty));
+		this.accumulateRealizedPnl(
+			realizedPnl,
+			symbol,
+			tradePrice.minus(current.avgCost).times(closedQty),
+		);
+
 		if (Math.sign(nextQty) === Math.sign(currentQty)) {
 			positions.set(symbol, {
 				qty: nextQty,
@@ -112,6 +128,15 @@ export class PortfolioManager {
 			qty: nextQty,
 			avgCost: tradePrice,
 		});
+	}
+
+	private accumulateRealizedPnl(
+		realizedPnl: Map<string, Decimal>,
+		symbol: string,
+		pnl: Decimal,
+	): void {
+		const current = realizedPnl.get(symbol) ?? new Decimal(0);
+		realizedPnl.set(symbol, current.plus(pnl));
 	}
 
 	private computeNav(

@@ -3,7 +3,7 @@ import type { ResearchNote } from "./research";
 import type {
 	AgentEvent,
 	SimulationSessionStatus,
-	SimRuntimeState,
+	SimRuntimeStateData,
 } from "./sim";
 import type { WatchlistSummaryPayload } from "./watchlist";
 
@@ -79,7 +79,7 @@ export interface ResearchPublishedMessage {
 export interface SimStateMessage {
 	type: WsMessageType.SimState;
 	channel: `sim:${string}`;
-	data: SimRuntimeState;
+	data: SimRuntimeStateData;
 }
 
 export interface SessionStatusChangedMessage {
@@ -89,7 +89,7 @@ export interface SessionStatusChangedMessage {
 }
 
 export type SimChannelMessage =
-	| { type: "runtime_state"; payload: SimRuntimeState }
+	| { type: "runtime_state"; payload: SimRuntimeStateData }
 	| {
 			type: "session_status_changed";
 			payload: { sessionId: string; status: SimulationSessionStatus };

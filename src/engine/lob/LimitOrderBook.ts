@@ -38,15 +38,9 @@ export class LimitOrderBook {
 			while (remainingQty > 0 && oppositeSide.length > 0) {
 				// For limit orders, stop if price no longer crosses
 				if (order.type === "limit") {
-					if (
-						order.side === "buy" &&
-						order.price.lt(oppositeSide[0].price)
-					)
+					if (order.side === "buy" && order.price.lt(oppositeSide[0].price))
 						break;
-					if (
-						order.side === "sell" &&
-						order.price.gt(oppositeSide[0].price)
-					)
+					if (order.side === "sell" && order.price.gt(oppositeSide[0].price))
 						break;
 				}
 
@@ -66,20 +60,20 @@ export class LimitOrderBook {
 				remainingQty -= fillQty;
 
 				// Adjust the queue's running totalQty
-				bestLevel.queue.adjustQty(-(prevRemainingFront - (frontOrder.qty - frontOrder.filledQty)));
+				bestLevel.queue.adjustQty(
+					-(prevRemainingFront - (frontOrder.qty - frontOrder.filledQty)),
+				);
 
 				// Update statuses
 				frontOrder.status =
 					frontOrder.filledQty === frontOrder.qty ? "filled" : "partial";
-				order.status =
-					order.filledQty === order.qty ? "filled" : "partial";
+				order.status = order.filledQty === order.qty ? "filled" : "partial";
 
 				// Create trade
 				trades.push({
 					id: nanoid(),
 					buyOrderId: order.side === "buy" ? order.id : frontOrder.id,
-					sellOrderId:
-						order.side === "sell" ? order.id : frontOrder.id,
+					sellOrderId: order.side === "sell" ? order.id : frontOrder.id,
 					buyerAgentId:
 						order.side === "buy" ? order.agentId : frontOrder.agentId,
 					sellerAgentId:
@@ -183,12 +177,86 @@ export class LimitOrderBook {
 		return bid.plus(ask).div(2);
 	}
 
+	sweepCrossingOrders(tick: number): Trade[] {
+		const trades: Trade[] = [];
+
+		while (this.bids.length > 0 && this.asks.length > 0) {
+			const bestBid = this.bids[0];
+			const bestAsk = this.asks[0];
+			if (bestBid.price.lt(bestAsk.price)) break;
+
+			const bidOrder = bestBid.queue.peek();
+			const askOrder = bestAsk.queue.peek();
+			if (!bidOrder || !askOrder) break;
+
+			const fillQty = Math.min(
+				bidOrder.qty - bidOrder.filledQty,
+				askOrder.qty - askOrder.filledQty,
+			);
+			const fillPrice = bestAsk.price;
+
+			const prevBidRemaining = bidOrder.qty - bidOrder.filledQty;
+			const prevAskRemaining = askOrder.qty - askOrder.filledQty;
+
+			bidOrder.filledQty += fillQty;
+			askOrder.filledQty += fillQty;
+
+			bestBid.queue.adjustQty(
+				-(prevBidRemaining - (bidOrder.qty - bidOrder.filledQty)),
+			);
+			bestAsk.queue.adjustQty(
+				-(prevAskRemaining - (askOrder.qty - askOrder.filledQty)),
+			);
+
+			bidOrder.status =
+				bidOrder.filledQty === bidOrder.qty ? "filled" : "partial";
+			askOrder.status =
+				askOrder.filledQty === askOrder.qty ? "filled" : "partial";
+
+			trades.push({
+				id: nanoid(),
+				buyOrderId: bidOrder.id,
+				sellOrderId: askOrder.id,
+				buyerAgentId: bidOrder.agentId,
+				sellerAgentId: askOrder.agentId,
+				symbol: this.symbol,
+				price: fillPrice,
+				qty: fillQty,
+				tick,
+			});
+
+			this.lastPrice = fillPrice;
+
+			if (bidOrder.status === "filled") {
+				bestBid.queue.dequeue();
+				this.orderIndex.delete(bidOrder.id);
+				if (bestBid.queue.isEmpty) {
+					this.bids.shift();
+				}
+			}
+			if (askOrder.status === "filled") {
+				bestAsk.queue.dequeue();
+				this.orderIndex.delete(askOrder.id);
+				if (bestAsk.queue.isEmpty) {
+					this.asks.shift();
+				}
+			}
+		}
+
+		return trades;
+	}
+
+	getBidLevelCount(): number {
+		return this.bids.length;
+	}
+
+	getAskLevelCount(): number {
+		return this.asks.length;
+	}
+
 	// --- Private helpers ---
 
-	private isCrossing(
-		order: Order,
-		oppositeSide: PriceLevelEntry[],
-	): boolean {
+	private isCrossing(order: Order, oppositeSide: PriceLevelEntry[]): boolean {
 		if (oppositeSide.length === 0) return false;
 		const bestOpposite = oppositeSide[0].price;
 		if (order.side === "buy") return order.price.gte(bestOpposite);
@@ -254,5 +322,4 @@ export class LimitOrderBook {
 		}
 		return result;
 	}
-
 }

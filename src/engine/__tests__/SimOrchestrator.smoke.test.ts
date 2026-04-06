@@ -82,6 +82,8 @@ function makeState(config: AgentConfig): AgentState {
 		researchInbox: new Map(),
 		lastAutopilotDirective: null,
 		lastLlmTick: null,
+		realizedPnl: new Map(),
+		pendingFills: [],
 	};
 }
 

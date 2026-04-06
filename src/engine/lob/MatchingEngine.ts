@@ -77,6 +77,14 @@ export class MatchingEngine {
 		return referencePrices;
 	}
 
+	sweepCrossingBooks(tick: number): Trade[] {
+		const trades: Trade[] = [];
+		for (const book of this.books.values()) {
+			trades.push(...book.sweepCrossingOrders(tick));
+		}
+		return trades;
+	}
+
 	seedBook(
 		symbol: string,
 		midPrice: Decimal,

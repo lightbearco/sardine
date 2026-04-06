@@ -9,6 +9,7 @@ import {
 	getActiveGroupIndex,
 	partitionAgentEntries,
 } from "#/agents/batch-scheduler";
+import { requoteMarketMakers } from "#/agents/market-maker-liquidity";
 import { PortfolioManager } from "#/agents/PortfolioManager";
 import { serializeAgentEntryForDb } from "#/agents/persistence";
 import type { Database } from "#/db/index";
@@ -348,6 +349,13 @@ export class SimOrchestrator {
 				}
 			}
 
+			const requoteOrders = requoteMarketMakers(
+				this.agentRegistry,
+				this.matchingEngine,
+				simTick,
+			);
+			stagedOrders.push(...requoteOrders);
+
 			const activeOutcome = await this.runActiveAgents(
 				active,
 				simTick,
@@ -374,6 +382,9 @@ export class SimOrchestrator {
 				validOrders.map((stagedOrder) => stagedOrder.order),
 				simTick,
 			);
+
+			const sweepTrades = this.matchingEngine.sweepCrossingBooks(simTick);
+			trades.push(...sweepTrades);
 
 			for (const trade of trades) {
 				changedAgentIds.add(trade.buyerAgentId);
@@ -409,7 +420,34 @@ export class SimOrchestrator {
 				postMatchReferencePrices,
 			);
 
+			for (const trade of trades) {
+				const buyerEntry = this.agentRegistry.get(trade.buyerAgentId);
+				const sellerEntry = this.agentRegistry.get(trade.sellerAgentId);
+				if (buyerEntry) {
+					buyerEntry.state.pendingFills.push(trade);
+				}
+				if (sellerEntry && sellerEntry !== buyerEntry) {
+					sellerEntry.state.pendingFills.push(trade);
+				}
+			}
+
 			const bars = this.computeOhlcvBars(trades);
+			const barsBySymbol = new Set(bars.map((bar) => bar.symbol));
+			const refPrices = this.matchingEngine.getReferencePrices();
+			for (const sym of touchedSymbols) {
+				if (barsBySymbol.has(sym)) continue;
+				const refPrice = refPrices.get(sym);
+				if (!refPrice) continue;
+				bars.push({
+					symbol: sym,
+					open: refPrice,
+					high: refPrice,
+					low: refPrice,
+					close: refPrice,
+					volume: 0,
+					tick: simTick,
+				});
+			}
 			await this.persistTick(
 				persistedOrders,
 				trades,
@@ -511,19 +549,16 @@ export class SimOrchestrator {
 			entry.state.lastAutopilotDirective = fallbackDirective;
 			entry.state.lastLlmTick = simTick;
 			changedAgentIds.add(entry.config.id);
-			this.emitAndCollectAgentEvent(
-				agentEvents,
-				{
-					type: "failed",
-					agentId: entry.config.id,
-					agentName: entry.config.name,
-					tick: simTick,
-					reason: failure.reason,
-					message: failure.message,
-					transcript: failure.transcript,
-					fallbackDirective,
-				} as Omit<AgentFailedEvent, "eventId">,
-			);
+			this.emitAndCollectAgentEvent(agentEvents, {
+				type: "failed",
+				agentId: entry.config.id,
+				agentName: entry.config.name,
+				tick: simTick,
+				reason: failure.reason,
+				message: failure.message,
+				transcript: failure.transcript,
+				fallbackDirective,
+			} as Omit<AgentFailedEvent, "eventId">);
 		}
 
 		return { stagedOrders };
@@ -637,16 +672,13 @@ export class SimOrchestrator {
 					tick: simTick,
 				};
 
-				this.emitAndCollectAgentEvent(
-					agentEvents,
-					{
-						type: "signal",
-						agentId: entry.config.id,
-						agentName: entry.config.name,
-						tick: simTick,
-						signal,
-					} as Omit<AgentSignalEvent, "eventId">,
-				);
+				this.emitAndCollectAgentEvent(agentEvents, {
+					type: "signal",
+					agentId: entry.config.id,
+					agentName: entry.config.name,
+					tick: simTick,
+					signal,
+				} as Omit<AgentSignalEvent, "eventId">);
 			}
 
 			return { decision, orders };
@@ -712,17 +744,14 @@ export class SimOrchestrator {
 
 			transcript += delta;
 			onDelta(delta);
-			this.emitAndCollectAgentEvent(
-				agentEvents,
-				{
-					type: "thinking_delta",
-					agentId: entry.config.id,
-					agentName: entry.config.name,
-					tick: simTick,
-					delta,
-					transcript,
-				} as Omit<AgentThinkingDeltaEvent, "eventId">,
-			);
+			this.emitAndCollectAgentEvent(agentEvents, {
+				type: "thinking_delta",
+				agentId: entry.config.id,
+				agentName: entry.config.name,
+				tick: simTick,
+				delta,
+				transcript,
+			} as Omit<AgentThinkingDeltaEvent, "eventId">);
 		}
 	}
 
@@ -1439,6 +1468,7 @@ export class SimOrchestrator {
 							currentNav: row.currentNav,
 							positions: row.positions,
 							parameters: row.parameters,
+							realizedPnl: row.realizedPnl,
 							lastAutopilotDirective: row.lastAutopilotDirective,
 							llmGroup: row.llmGroup,
 							lastLlmAt:

@@ -16,6 +16,23 @@ const positionSnapshotSchema = z.object({
 	markPrice: z.string(),
 	marketValue: z.string(),
 	unrealizedPnl: z.string(),
+	weightPct: z.string(),
+	realizedPnl: z.string(),
+});
+
+const constraintStatusSchema = z.object({
+	maxPositionPct: z
+		.object({
+			limit: z.string(),
+			current: z.string(),
+		})
+		.optional(),
+	maxInventoryPerName: z
+		.object({
+			limit: z.string(),
+			current: z.string(),
+		})
+		.optional(),
 });
 
 const openOrderSnapshotSchema = z.object({
@@ -36,8 +53,11 @@ const portfolioOutputSchema = z.object({
 	cash: z.string(),
 	nav: z.string(),
 	totalPnl: z.string(),
+	pnlPct: z.string(),
+	totalRealizedPnl: z.string(),
 	positions: z.array(positionSnapshotSchema),
 	openOrders: z.array(openOrderSnapshotSchema),
+	constraintStatus: constraintStatusSchema,
 });
 
 function resolveMarkPrice(
@@ -83,7 +103,8 @@ export const portfolioTool = createTool<
 	TradingRequestContextValues
 >({
 	id: "portfolio",
-	description: "Read the calling agent's current positions, NAV, P&L, and open orders.",
+	description:
+		"Read the calling agent's current positions, NAV, P&L, and open orders.",
 	inputSchema: portfolioInputSchema,
 	outputSchema: portfolioOutputSchema,
 	execute: async (input, context) => {
@@ -92,6 +113,8 @@ export const portfolioTool = createTool<
 		const engine = requestContext?.get("matching-engine");
 		const agentId = requestContext?.get("agent-id");
 		const capital = requestContext?.get("capital");
+		const maxPositionPct = requestContext?.get("max-position-pct");
+		const maxInventoryPerName = requestContext?.get("max-inventory-per-name");
 
 		if (!registry || !engine || !agentId || capital === undefined) {
 			throw new Error(
@@ -104,12 +127,24 @@ export const portfolioTool = createTool<
 			throw new Error(`Unknown agent ID: ${agentId}`);
 		}
 
+		const nav = entry.state.nav;
+		const capitalDecimal = new Decimal(capital);
+
 		const positions = Array.from(entry.state.positions.entries())
-			.filter(([symbol]) => input.symbol === undefined || symbol === input.symbol)
+			.filter(
+				([symbol]) => input.symbol === undefined || symbol === input.symbol,
+			)
 			.map(([symbol, position]) => {
 				const markPrice = resolveMarkPrice(symbol, position, engine);
 				const marketValue = markPrice.times(position.qty);
-				const unrealizedPnl = markPrice.minus(position.avgCost).times(position.qty);
+				const unrealizedPnl = markPrice
+					.minus(position.avgCost)
+					.times(position.qty);
+				const weightPct = nav.gt(0)
+					? marketValue.div(nav).times(100)
+					: new Decimal(0);
+				const realizedPnl =
+					entry.state.realizedPnl.get(symbol) ?? new Decimal(0);
 
 				return {
 					symbol,
@@ -118,21 +153,63 @@ export const portfolioTool = createTool<
 					markPrice: markPrice.toString(),
 					marketValue: marketValue.toString(),
 					unrealizedPnl: unrealizedPnl.toString(),
+					weightPct: weightPct.toDecimalPlaces(2).toString(),
+					realizedPnl: realizedPnl.toString(),
 				};
 			});
 
 		const openOrders = Array.from(entry.state.openOrders.values())
-			.filter((order) => input.symbol === undefined || order.symbol === input.symbol)
+			.filter(
+				(order) => input.symbol === undefined || order.symbol === input.symbol,
+			)
 			.map(serializeOrder);
+
+		const totalPnl = nav.minus(capitalDecimal);
+		const pnlPct = capitalDecimal.gt(0)
+			? totalPnl.div(capitalDecimal).times(100).toDecimalPlaces(2)
+			: new Decimal(0);
+
+		const totalRealizedPnl = Array.from(
+			entry.state.realizedPnl.values(),
+		).reduce((sum, pnl) => sum.plus(pnl), new Decimal(0));
+
+		const constraintStatus: z.infer<typeof constraintStatusSchema> = {};
+
+		if (maxPositionPct !== undefined) {
+			const limit = new Decimal(maxPositionPct).times(100);
+			const maxCurrent = positions.reduce(
+				(max, p) => Decimal.max(max, new Decimal(p.weightPct)),
+				new Decimal(0),
+			);
+			constraintStatus.maxPositionPct = {
+				limit: limit.toDecimalPlaces(2).toString(),
+				current: maxCurrent.toDecimalPlaces(2).toString(),
+			};
+		}
+
+		if (maxInventoryPerName !== undefined) {
+			const limit = new Decimal(maxInventoryPerName);
+			const maxInventory = positions.reduce(
+				(max, p) => Decimal.max(max, new Decimal(p.marketValue)),
+				new Decimal(0),
+			);
+			constraintStatus.maxInventoryPerName = {
+				limit: limit.toString(),
+				current: maxInventory.toString(),
+			};
+		}
 
 		return {
 			agentId,
-			capital: new Decimal(capital).toString(),
+			capital: capitalDecimal.toString(),
 			cash: entry.state.cash.toString(),
-			nav: entry.state.nav.toString(),
-			totalPnl: entry.state.nav.minus(capital).toString(),
+			nav: nav.toString(),
+			totalPnl: totalPnl.toString(),
+			pnlPct: pnlPct.toString(),
+			totalRealizedPnl: totalRealizedPnl.toString(),
 			positions,
 			openOrders,
+			constraintStatus,
 		};
 	},
 });

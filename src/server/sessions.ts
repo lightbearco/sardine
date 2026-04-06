@@ -122,8 +122,13 @@ function mapSessionSummary(
 		seed: session.seed,
 		agentCount: session.agentCount,
 		groupCount: session.groupCount,
+		activeGroupSize: session.activeGroupSize,
 		tickIntervalMs: session.tickIntervalMs,
 		simulatedTickDuration: session.simulatedTickDuration,
+		llmConcurrency: session.llmConcurrency,
+		llmTimeoutMs: session.llmTimeoutMs,
+		researchFrequency: session.researchFrequency,
+		alpacaDataTypes: session.alpacaDataTypes ?? ["snapshots"],
 		traderDistribution:
 			session.traderDistribution ??
 			buildDefaultTraderDistribution(session.agentCount),
@@ -228,38 +233,45 @@ async function deleteSessionObservability(sessionId: string): Promise<void> {
 		return;
 	}
 
-	const traceIds = new Set<string>();
-	let page = 0;
+	try {
+		const traceIds = new Set<string>();
+		let page = 0;
 
-	while (true) {
-		const response = await observabilityStore.listTraces({
-			filters: {
-				resourceId: sessionId,
-			},
-			pagination: {
-				page,
-				perPage: 100,
-			},
+		while (true) {
+			const response = await observabilityStore.listTraces({
+				filters: {
+					resourceId: sessionId,
+				},
+				pagination: {
+					page,
+					perPage: 100,
+				},
+			});
+
+			for (const span of response.spans) {
+				traceIds.add(span.traceId);
+			}
+
+			if (!response.pagination.hasMore) {
+				break;
+			}
+
+			page += 1;
+		}
+
+		if (traceIds.size === 0) {
+			return;
+		}
+
+		await observabilityStore.batchDeleteTraces({
+			traceIds: [...traceIds],
 		});
-
-		for (const span of response.spans) {
-			traceIds.add(span.traceId);
-		}
-
-		if (!response.pagination.hasMore) {
-			break;
-		}
-
-		page += 1;
+	} catch (error) {
+		console.warn(
+			`[Sessions] Failed to delete observability data for session ${sessionId}:`,
+			error instanceof Error ? error.message : error,
+		);
 	}
-
-	if (traceIds.size === 0) {
-		return;
-	}
-
-	await observabilityStore.batchDeleteTraces({
-		traceIds: [...traceIds],
-	});
 }
 
 export async function hardDeleteSimulationSession(
@@ -322,8 +334,13 @@ export async function createSimulationSession(
 		seed: 42,
 		agentCount: parsed.agentCount,
 		groupCount,
+		activeGroupSize: parsed.activeGroupSize,
 		tickIntervalMs: parsed.tickIntervalMs,
 		simulatedTickDuration: parsed.simulatedTickDuration,
+		llmConcurrency: parsed.llmConcurrency,
+		llmTimeoutMs: parsed.llmTimeoutMs,
+		researchFrequency: parsed.researchFrequency,
+		alpacaDataTypes: parsed.alpacaDataTypes,
 		traderDistribution: parsed.traderDistribution,
 		createdAt: now,
 		updatedAt: now,

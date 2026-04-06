@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { Badge } from "#/components/ui/badge";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAgentFeed } from "#/hooks/useAgentFeed";
 import {
@@ -71,76 +72,104 @@ export function Blotter() {
 	return (
 		<section className="flex h-full min-h-0 flex-col rounded-xl border border-(--terminal-border) bg-(--terminal-surface) overflow-hidden">
 			<div className="flex items-center justify-between border-b border-(--terminal-border) px-3 py-2 shrink-0">
-				<span className="text-xs font-semibold text-(--terminal-text)">Blotter</span>
-				<span className="text-[10px] text-(--terminal-text-muted)">{events.length} events</span>
+				<span className="text-xs font-semibold text-(--terminal-text)">
+					Blotter
+				</span>
+				<div className="flex items-center gap-1.5">
+					<span className="text-[10px] text-(--terminal-text-muted)">
+						{events.length} events
+					</span>
+					<MaximizeButton panelId="blotter" />
+				</div>
 			</div>
 
-			<div className={`grid ${COLS} items-center gap-2 border-b border-(--terminal-border) px-3 py-[3px] shrink-0`}>
+			<div
+				className={`grid ${COLS} items-center gap-2 border-b border-(--terminal-border) px-3 py-[3px] shrink-0`}
+			>
 				{["Tick", "Agent", "Side", "Sym", "Price", "Qty", "Reason"].map((h) => (
-					<span key={h} className="text-[9px] uppercase tracking-widest text-(--terminal-text-muted)">
+					<span
+						key={h}
+						className="text-[9px] uppercase tracking-widest text-(--terminal-text-muted)"
+					>
 						{h}
 					</span>
 				))}
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-auto">
-				<div ref={listRef} className="relative h-full">
-					<div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-						{virtualizer.getVirtualItems().map((virtualRow) => {
-							const event = events[virtualRow.index];
-							if (!event) {
-								return null;
-							}
-							const row = extractRow(event);
+			<div ref={listRef} className="min-h-0 flex-1 overflow-auto">
+				<div
+					style={{
+						height: `${virtualizer.getTotalSize()}px`,
+						position: "relative",
+					}}
+				>
+					{virtualizer.getVirtualItems().map((virtualRow) => {
+						const event = events[virtualRow.index];
+						if (!event) {
+							return null;
+						}
+						const row = extractRow(event);
 
-							return (
-								<div
-									key={`${event.eventId ?? virtualRow.index}-${row.tick}-${row.agent}-${row.symbol}`}
-									className="absolute inset-x-0 border-b border-(--terminal-border) hover:bg-white/5"
-									style={{
-										transform: `translateY(${virtualRow.start}px)`,
-										height: virtualRow.size,
-									}}
+						return (
+							<div
+								key={`${event.eventId ?? virtualRow.index}-${row.tick}-${row.agent}-${row.symbol}`}
+								className="absolute inset-x-0 border-b border-(--terminal-border) hover:bg-white/5"
+								style={{
+									transform: `translateY(${virtualRow.start}px)`,
+									height: virtualRow.size,
+								}}
+							>
+								<button
+									type="button"
+									className={`grid w-full ${COLS} items-center gap-2 px-3 py-2 text-xs text-(--terminal-text) text-left`}
 								>
-									<button
-										type="button"
-										className={`grid w-full ${COLS} items-center gap-2 px-3 py-2 text-xs text-(--terminal-text) text-left`}
+									<span className="tabular-nums text-(--terminal-text-muted)">
+										{row.tick}
+									</span>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span className="truncate text-[var(--terminal-text)]">
+												{row.agent}
+											</span>
+										</TooltipTrigger>
+										<TooltipContent side="bottom">
+											<span className="text-[11px] text-(--terminal-text)">
+												{row.agent}
+											</span>
+										</TooltipContent>
+									</Tooltip>
+									<Badge
+										className={
+											SIDE_CLASS[row.side] ??
+											"bg-secondary text-secondary-foreground"
+										}
 									>
-										<span className="tabular-nums text-(--terminal-text-muted)">{row.tick}</span>
-										<Tooltip>
-											<TooltipTrigger asChild>
-												<span className="truncate text-[var(--terminal-text)]">
-													{row.agent}
+										{row.side}
+									</Badge>
+									<span className="truncate">{row.symbol}</span>
+									<span className="tabular-nums">{row.price}</span>
+									<span className="tabular-nums">{row.qty}</span>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span className="flex cursor-help items-center gap-1 truncate text-(--terminal-text-muted)">
+												<span className="text-[10px] font-semibold">
+													Reason
 												</span>
-											</TooltipTrigger>
-											<TooltipContent side="bottom">
-												<span className="text-[11px] text-(--terminal-text)">{row.agent}</span>
-											</TooltipContent>
-										</Tooltip>
-										<Badge className={SIDE_CLASS[row.side] ?? "bg-secondary text-secondary-foreground"}>
-											{row.side}
-										</Badge>
-										<span className="truncate">{row.symbol}</span>
-										<span className="tabular-nums">{row.price}</span>
-										<span className="tabular-nums">{row.qty}</span>
-										<Tooltip>
-											<TooltipTrigger asChild>
-												<span className="flex cursor-help items-center gap-1 truncate text-(--terminal-text-muted)">
-													<span className="text-[10px] font-semibold">Reason</span>
-													<span className="text-[10px] font-semibold text-(--terminal-text-muted)">?</span>
+												<span className="text-[10px] font-semibold text-(--terminal-text-muted)">
+													?
 												</span>
-											</TooltipTrigger>
-											<TooltipContent side="bottom">
-												<p className="max-w-xs whitespace-pre-wrap text-[11px] leading-[1.4] text-(--terminal-text)">
-													{row.reasoning}
-												</p>
-											</TooltipContent>
-										</Tooltip>
-									</button>
-								</div>
-							);
-						})}
-					</div>
+											</span>
+										</TooltipTrigger>
+										<TooltipContent side="bottom">
+											<p className="max-w-xs whitespace-pre-wrap text-[11px] leading-[1.4] text-(--terminal-text)">
+												{row.reasoning}
+											</p>
+										</TooltipContent>
+									</Tooltip>
+								</button>
+							</div>
+						);
+					})}
 				</div>
 			</div>
 		</section>

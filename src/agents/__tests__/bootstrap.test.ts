@@ -61,6 +61,8 @@ describe("bootstrapSimulation", () => {
 							volume: 1000 + index,
 							timestamp: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T00:00:00Z`,
 						})),
+						trades: [],
+						snapshot: null,
 					},
 					MSFT: {
 						symbol: "MSFT",
@@ -78,14 +80,20 @@ describe("bootstrapSimulation", () => {
 							volume: 2000 + index,
 							timestamp: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T00:00:00Z`,
 						})),
+						trades: [],
+						snapshot: null,
 					},
 				},
 			},
 		});
 
 		expect(result.initialTick).toBe(60);
-		expect(result.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber()).toBe(100);
-		expect(result.matchingEngine.getSnapshot("AAPL").asks[0]?.price.toNumber()).toBe(100.2);
+		expect(
+			result.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber(),
+		).toBe(100);
+		expect(
+			result.matchingEngine.getSnapshot("AAPL").asks[0]?.price.toNumber(),
+		).toBe(100.2);
 
 		const agentWithPositions = result.agentRegistry
 			.getAll()
@@ -98,7 +106,12 @@ describe("bootstrapSimulation", () => {
 		const tickInsert = insertCalls.find(
 			(call) =>
 				Array.isArray(call.values) &&
-				call.values.some((row: any) => row.sessionId === "sim_test" && row.symbol === "AAPL" && row.tick === 60),
+				call.values.some(
+					(row: any) =>
+						row.sessionId === "sim_test" &&
+						row.symbol === "AAPL" &&
+						row.tick === 60,
+				),
 		);
 		expect(tickInsert).toBeDefined();
 	});
@@ -127,8 +140,12 @@ describe("bootstrapSimulation", () => {
 		});
 
 		expect(result.initialTick).toBe(0);
-		expect(result.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber()).toBe(149.95);
-		expect(result.matchingEngine.getSnapshot("AAPL").asks[0]?.price.toNumber()).toBe(150.05);
+		expect(
+			result.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber(),
+		).toBe(149.95);
+		expect(
+			result.matchingEngine.getSnapshot("AAPL").asks[0]?.price.toNumber(),
+		).toBe(150.05);
 	});
 
 	it("restores persisted runtime state, open orders, and tick metadata", async () => {
@@ -274,17 +291,23 @@ describe("bootstrapSimulation", () => {
 		expect(restoredEntry?.state.status).toBe("paused");
 		expect(restoredEntry?.state.cash.toNumber()).toBe(12345);
 		expect(restoredEntry?.state.nav.toNumber()).toBe(12567);
-		expect(restoredEntry?.state.positions.get("AAPL")?.avgCost.toNumber()).toBe(149.8);
-		expect(restoredEntry?.state.openOrders.get("order-1")?.price.toNumber()).toBe(149.9);
-		expect(resumed.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber()).toBe(
-			149.9,
+		expect(restoredEntry?.state.positions.get("AAPL")?.avgCost.toNumber()).toBe(
+			149.8,
 		);
+		expect(
+			restoredEntry?.state.openOrders.get("order-1")?.price.toNumber(),
+		).toBe(149.9);
+		expect(
+			resumed.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber(),
+		).toBe(149.9);
 		expect(resumed.runtimeState.currentTick).toBe(12);
 		expect(resumed.runtimeState.isRunning).toBe(false);
 		expect(resumed.runtimeState.speedMultiplier).toBe(2);
 		expect(resumed.runtimeState.tickIntervalMs).toBe(750);
 		expect(resumed.runtimeState.nextAgentEventSequence).toBe(9);
-		expect(resumed.runtimeState.lastSummary?.trades[0]?.price.toNumber()).toBe(150.12);
+		expect(resumed.runtimeState.lastSummary?.trades[0]?.price.toNumber()).toBe(
+			150.12,
+		);
 		expect(resumed.researchNotes).toHaveLength(1);
 	});
 });

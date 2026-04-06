@@ -29,6 +29,8 @@ function makeAgentState(overrides: Partial<AgentState> = {}): AgentState {
 			holdPositions: ["AAPL"],
 		},
 		lastLlmTick: null,
+		realizedPnl: new Map(),
+		pendingFills: [],
 		...overrides,
 	};
 }

@@ -42,6 +42,8 @@ describe("live-feed bootstrap market data", () => {
 					timestamp: "2026-04-04T00:00:00Z",
 				},
 			],
+			trades: [],
+			snapshot: null,
 		});
 	});
 });

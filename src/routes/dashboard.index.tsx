@@ -1,4 +1,8 @@
-import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
 import { useState } from "react";
 import { DeleteSimulationDialog } from "#/components/dashboard/DeleteSimulationDialog";
 import { Button } from "#/components/ui/button";
@@ -33,7 +37,9 @@ function DashboardSessionsRoute() {
 		id: string;
 		name: string;
 	} | null>(null);
-	const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+	const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+		null,
+	);
 	const [form, setForm] = useState<CreateSimulationSessionInput>(
 		buildDefaultSimulationSessionInput(),
 	);
@@ -271,6 +277,54 @@ function DashboardSessionsRoute() {
 										onChange={(event) =>
 											updateNumberField(
 												"simulatedTickDuration",
+												Number(event.target.value) || 1,
+											)
+										}
+									/>
+								</label>
+								<label className="grid gap-2 text-sm">
+									<span>Max Concurrent LLM Calls</span>
+									<input
+										className="rounded-xl border  px-3 py-2 "
+										type="number"
+										min={1}
+										max={50}
+										value={form.llmConcurrency}
+										onChange={(event) =>
+											updateNumberField(
+												"llmConcurrency",
+												Number(event.target.value) || 1,
+											)
+										}
+									/>
+								</label>
+								<label className="grid gap-2 text-sm">
+									<span>LLM Timeout (ms)</span>
+									<input
+										className="rounded-xl border  px-3 py-2 "
+										type="number"
+										min={1000}
+										max={60000}
+										value={form.llmTimeoutMs}
+										onChange={(event) =>
+											updateNumberField(
+												"llmTimeoutMs",
+												Number(event.target.value) || 1000,
+											)
+										}
+									/>
+								</label>
+								<label className="grid gap-2 text-sm">
+									<span>Research Cycle Frequency (ticks)</span>
+									<input
+										className="rounded-xl border  px-3 py-2 "
+										type="number"
+										min={1}
+										max={100}
+										value={form.researchFrequency}
+										onChange={(event) =>
+											updateNumberField(
+												"researchFrequency",
 												Number(event.target.value) || 1,
 											)
 										}

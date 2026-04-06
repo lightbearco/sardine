@@ -355,7 +355,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Technology", "Healthcare", "Financials"],
 				risk: 0.58,
-				capital: 5_000_000,
+				capital: 100_000_000,
 				model: TIER1_MODEL,
 				decisionParams: {
 					maxPositionPct: 0.08,
@@ -395,10 +395,10 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: [...SECTORS],
 				risk: 0.32,
-				capital: 7_500_000,
+				capital: 150_000_000,
 				model: TIER1_MODEL,
 				decisionParams: {
-					maxInventoryPerName: 500_000,
+					maxInventoryPerName: 10_000_000,
 					spreadFloorBps: 4,
 				},
 			},
@@ -432,7 +432,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Healthcare", "Utilities", "Consumer Staples"],
 				risk: 0.42,
-				capital: 2_500_000,
+				capital: 50_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					defensiveTilt: 0.7,
@@ -462,7 +462,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Technology", "Financials", "Industrials"],
 				risk: 0.63,
-				capital: 2_000_000,
+				capital: 40_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					lookbackWindow: 12,
@@ -501,7 +501,7 @@ function buildNamedAgents(): Record<
 					"Consumer Discretionary",
 				],
 				risk: 0.68,
-				capital: 1_750_000,
+				capital: 35_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					catalystHorizonDays: 10,
@@ -533,7 +533,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Financials", "Industrials", "Technology"],
 				risk: 0.37,
-				capital: 1_500_000,
+				capital: 30_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					quoteSkewBps: 6,
@@ -568,7 +568,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Technology", "Financials", "Communication Services"],
 				risk: 0.35,
-				capital: 1_250_000,
+				capital: 25_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					adverseSelectionGuard: 0.015,
@@ -603,7 +603,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Technology", "Healthcare", "Consumer Discretionary"],
 				risk: 0.39,
-				capital: 1_300_000,
+				capital: 26_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					hedgeUrgency: 0.65,
@@ -641,7 +641,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: ["XOM", "CVX", "MO", "PM"],
 				sectors: ["Healthcare", "Industrials", "Utilities"],
 				risk: 0.24,
-				capital: 3_500_000,
+				capital: 70_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					maxPositionPct: 0.03,
@@ -676,7 +676,7 @@ function buildNamedAgents(): Record<
 				restrictedSymbols: [],
 				sectors: ["Technology", "Healthcare", "Industrials", "Financials"],
 				risk: 0.27,
-				capital: 3_000_000,
+				capital: 60_000_000,
 				model: DEFAULT_MODEL,
 				decisionParams: {
 					benchmarkTrackingTolerance: 0.015,
@@ -789,8 +789,8 @@ function buildTier2Procedural(
 				: Number(rng.float(0.38, 0.72).toFixed(3)),
 		capital:
 			category === "pension"
-				? rng.int(1_500_000, 4_500_000)
-				: rng.int(900_000, 2_500_000),
+				? rng.int(30_000_000, 90_000_000)
+				: rng.int(18_000_000, 50_000_000),
 		model: DEFAULT_MODEL,
 		decisionParams:
 			category === "hedge-fund"
@@ -838,10 +838,10 @@ function buildTier3Agent(
 				: Number(rng.float(0.28, 0.78).toFixed(3));
 	const capital =
 		category === "depth-provider"
-			? rng.int(120_000, 320_000)
+			? rng.int(2_400_000, 6_400_000)
 			: category === "value"
-				? rng.int(40_000, 180_000)
-				: rng.int(25_000, 140_000);
+				? rng.int(800_000, 3_600_000)
+				: rng.int(500_000, 2_800_000);
 	const decisionParams: Record<string, number> =
 		category === "momentum"
 			? {
@@ -1111,6 +1111,8 @@ export function spawnAgents(
 			researchInbox: new Map(),
 			lastAutopilotDirective: buildDefaultDirective(config),
 			lastLlmTick: null,
+			realizedPnl: new Map(),
+			pendingFills: [],
 		};
 
 		registry.register({

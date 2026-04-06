@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { useMarketData } from "#/hooks/useMarketData";
 import { useOrderBook } from "#/hooks/useOrderBook";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
@@ -20,9 +21,16 @@ function fmtPct(value: number) {
 	return `${sign}${value.toFixed(2)}%`;
 }
 
-function DepthRows({ rows, tone }: { rows: PriceLevelData[]; tone: "buy" | "sell" }) {
+function DepthRows({
+	rows,
+	tone,
+}: {
+	rows: PriceLevelData[];
+	tone: "buy" | "sell";
+}) {
 	const totalQty = useMemo(() => rows.reduce((s, r) => s + r.qty, 0), [rows]);
-	const color = tone === "buy" ? "var(--terminal-green)" : "var(--terminal-red)";
+	const color =
+		tone === "buy" ? "var(--terminal-green)" : "var(--terminal-red)";
 
 	let cumulative = 0;
 	return (
@@ -47,7 +55,10 @@ function DepthRows({ rows, tone }: { rows: PriceLevelData[]; tone: "buy" | "sell
 							style={{ width: `${sizePct}%`, backgroundColor: color }}
 						/>
 						{/* Price */}
-						<span className="relative w-[42%] font-mono font-semibold tabular-nums" style={{ color }}>
+						<span
+							className="relative w-[42%] font-mono font-semibold tabular-nums"
+							style={{ color }}
+						>
 							{fmt(row.price)}
 						</span>
 						{/* Orders */}
@@ -79,15 +90,22 @@ export function OrderBookPanel() {
 	const lastPrice = snapshot?.lastPrice ?? lastBar?.close;
 	const spread = snapshot?.spread;
 
-	const totalBidQty = useMemo(() => bids.reduce((s, r) => s + r.qty, 0), [bids]);
-	const totalAskQty = useMemo(() => asks.reduce((s, r) => s + r.qty, 0), [asks]);
+	const totalBidQty = useMemo(
+		() => bids.reduce((s, r) => s + r.qty, 0),
+		[bids],
+	);
+	const totalAskQty = useMemo(
+		() => asks.reduce((s, r) => s + r.qty, 0),
+		[asks],
+	);
 	const totalQty = totalBidQty + totalAskQty;
 	const bidPct = totalQty > 0 ? (totalBidQty / totalQty) * 100 : 50;
 	const askPct = 100 - bidPct;
 
-	const change = lastBar && lastBar.open > 0
-		? ((lastBar.close - lastBar.open) / lastBar.open) * 100
-		: null;
+	const change =
+		lastBar && lastBar.open > 0
+			? ((lastBar.close - lastBar.open) / lastBar.open) * 100
+			: null;
 	const changePositive = change !== null && change >= 0;
 
 	return (
@@ -99,12 +117,19 @@ export function OrderBookPanel() {
 					{change !== null && (
 						<span
 							className="text-[11px] font-semibold tabular-nums"
-							style={{ color: changePositive ? "var(--terminal-green)" : "var(--terminal-red)" }}
+							style={{
+								color: changePositive
+									? "var(--terminal-green)"
+									: "var(--terminal-red)",
+							}}
 						>
 							{fmtPct(change)}
 						</span>
 					)}
-					<span className="text-[10px] text-[var(--terminal-text-muted)]">{symbol}</span>
+					<span className="text-[10px] text-[var(--terminal-text-muted)]">
+						{symbol}
+					</span>
+					<MaximizeButton panelId="orderbook" />
 				</div>
 			</div>
 
@@ -120,7 +145,9 @@ export function OrderBookPanel() {
 						] as const
 					).map(([label, val]) => (
 						<div key={label} className="flex flex-col items-center py-1">
-							<span className="text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">{label}</span>
+							<span className="text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">
+								{label}
+							</span>
 							<span className="text-[11px] font-mono tabular-nums">
 								{label === "V" ? fmtQty(lastBar.volume) : fmt(val)}
 							</span>
@@ -131,10 +158,18 @@ export function OrderBookPanel() {
 
 			{/* Column labels */}
 			<div className="flex items-center gap-1 border-b border-[var(--terminal-border)] px-2 py-[3px] shrink-0">
-				<span className="w-[42%] text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">Price</span>
-				<span className="w-[18%] text-center text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">Ords</span>
-				<span className="w-[20%] text-right text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">Size</span>
-				<span className="w-[20%] text-right text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">Cum</span>
+				<span className="w-[42%] text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">
+					Price
+				</span>
+				<span className="w-[18%] text-center text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">
+					Ords
+				</span>
+				<span className="w-[20%] text-right text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">
+					Size
+				</span>
+				<span className="w-[20%] text-right text-[9px] uppercase tracking-widest text-[var(--terminal-text-muted)]">
+					Cum
+				</span>
 			</div>
 
 			{/* Asks */}
@@ -158,14 +193,21 @@ export function OrderBookPanel() {
 			{/* Bid/ask imbalance bar */}
 			<div className="shrink-0 border-t border-[var(--terminal-border)] px-3 py-2">
 				<div className="mb-1 flex justify-between text-[10px] text-[var(--terminal-text-muted)]">
-					<span style={{ color: "var(--terminal-green)" }}>B {bidPct.toFixed(0)}%</span>
+					<span style={{ color: "var(--terminal-green)" }}>
+						B {bidPct.toFixed(0)}%
+					</span>
 					<span className="text-[var(--terminal-text-muted)]">Imbalance</span>
-					<span style={{ color: "var(--terminal-red)" }}>{askPct.toFixed(0)}% A</span>
+					<span style={{ color: "var(--terminal-red)" }}>
+						{askPct.toFixed(0)}% A
+					</span>
 				</div>
 				<div className="flex h-1.5 overflow-hidden rounded-full">
 					<div
 						className="h-full transition-all duration-300"
-						style={{ width: `${bidPct}%`, backgroundColor: "var(--terminal-green)" }}
+						style={{
+							width: `${bidPct}%`,
+							backgroundColor: "var(--terminal-green)",
+						}}
 					/>
 					<div
 						className="h-full flex-1 transition-all duration-300"

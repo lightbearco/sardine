@@ -1,14 +1,20 @@
 import { useState } from "react";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { Badge } from "#/components/ui/badge";
 import { ScrollArea } from "#/components/ui/scroll-area";
-import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "#/components/ui/tooltip";
 import { useResearchFeed } from "#/hooks/useResearchFeed";
 import type { ResearchNote } from "#/types/research";
 
 const SENTIMENT_CLASS: Record<ResearchNote["sentiment"], string> = {
 	bullish: "border-transparent bg-emerald-500/15 text-emerald-300",
 	bearish: "border-transparent bg-red-500/15 text-red-300",
-	neutral: "border-(--terminal-border) bg-(--terminal-bg) text-(--terminal-text-muted)",
+	neutral:
+		"border-(--terminal-border) bg-(--terminal-bg) text-(--terminal-text-muted)",
 };
 
 const FOCUS_CLASS: Record<string, string> = {
@@ -27,7 +33,13 @@ const FOCUS_TOOLTIP: Record<string, string> = {
 
 function formatSources(sources: string[]): string {
 	return sources
-		.map((s) => { try { return new URL(s).hostname.replace(/^www\./, ""); } catch { return s; } })
+		.map((s) => {
+			try {
+				return new URL(s).hostname.replace(/^www\./, "");
+			} catch {
+				return s;
+			}
+		})
 		.join(", ");
 }
 
@@ -47,12 +59,19 @@ export function ResearchFeed() {
 	return (
 		<section className="flex h-full min-h-0 flex-col rounded-xl border border-(--terminal-border) bg-(--terminal-surface) overflow-hidden">
 			<div className="flex items-center justify-between border-b border-(--terminal-border) px-3 py-2 shrink-0">
-				<span className="text-xs font-semibold text-(--terminal-text)">Research Feed</span>
+				<span className="text-xs font-semibold text-(--terminal-text)">
+					Research Feed
+				</span>
 				<div className="flex items-center gap-2">
-					<span className="text-[10px] text-(--terminal-text-muted)">{notes.length} notes</span>
-					<Badge className={`text-[10px] px-1.5 py-0 ${isConnected ? "border-transparent bg-primary/15 text-primary-foreground" : "border-(--terminal-border) bg-(--terminal-bg) text-(--terminal-text-muted)"}`}>
+					<span className="text-[10px] text-(--terminal-text-muted)">
+						{notes.length} notes
+					</span>
+					<Badge
+						className={`text-[10px] px-1.5 py-0 ${isConnected ? "border-transparent bg-primary/15 text-primary-foreground" : "border-(--terminal-border) bg-(--terminal-bg) text-(--terminal-text-muted)"}`}
+					>
 						{isConnected ? "Live" : "Syncing"}
 					</Badge>
+					<MaximizeButton panelId="research" />
 				</div>
 			</div>
 
@@ -66,7 +85,10 @@ export function ResearchFeed() {
 						notes.map((note) => {
 							const isExpanded = expandedIds.has(note.id);
 							return (
-								<article key={note.id} className="rounded-lg border border-(--terminal-border) bg-(--terminal-bg)">
+								<article
+									key={note.id}
+									className="rounded-lg border border-(--terminal-border) bg-(--terminal-bg)"
+								>
 									{/* Header row — always visible, click to toggle */}
 									<button
 										type="button"
@@ -74,12 +96,18 @@ export function ResearchFeed() {
 										className="w-full p-2.5 text-left"
 									>
 										<div className="flex items-start justify-between gap-2">
-											<span className="text-xs font-semibold leading-4 text-(--terminal-text)">{note.headline}</span>
+											<span className="text-xs font-semibold leading-4 text-(--terminal-text)">
+												{note.headline}
+											</span>
 											<div className="flex items-center gap-1.5 shrink-0">
-												<Badge className={`${SENTIMENT_CLASS[note.sentiment]} text-[10px] px-1.5 py-0`}>
+												<Badge
+													className={`${SENTIMENT_CLASS[note.sentiment]} text-[10px] px-1.5 py-0`}
+												>
 													{note.sentiment}
 												</Badge>
-												<span className="text-[10px] text-(--terminal-text-muted)">{isExpanded ? "▲" : "▼"}</span>
+												<span className="text-[10px] text-(--terminal-text-muted)">
+													{isExpanded ? "▲" : "▼"}
+												</span>
 											</div>
 										</div>
 
@@ -87,7 +115,9 @@ export function ResearchFeed() {
 										<div className="mt-1.5 flex flex-wrap items-center gap-1">
 											<Tooltip>
 												<TooltipTrigger asChild>
-													<Badge className={`${FOCUS_CLASS[note.focus] ?? "border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted)"} text-[10px] px-1.5 py-0`}>
+													<Badge
+														className={`${FOCUS_CLASS[note.focus] ?? "border-(--terminal-border) bg-(--terminal-surface) text-(--terminal-text-muted)"} text-[10px] px-1.5 py-0`}
+													>
 														{note.focus}
 													</Badge>
 												</TooltipTrigger>
@@ -129,7 +159,9 @@ export function ResearchFeed() {
 														</Badge>
 													</TooltipTrigger>
 													<TooltipContent side="top">
-														<span className="text-[11px] text-(--terminal-text)">Symbol {symbol}</span>
+														<span className="text-[11px] text-(--terminal-text)">
+															Symbol {symbol}
+														</span>
 													</TooltipContent>
 												</Tooltip>
 											))}

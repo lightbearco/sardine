@@ -10,6 +10,10 @@ import { ResearchFeed } from "#/components/dashboard/ResearchFeed";
 import { TimeAndSales } from "#/components/dashboard/TimeAndSales";
 import { TopBar } from "#/components/dashboard/TopBar";
 import { Watchlist } from "#/components/dashboard/Watchlist";
+import {
+	MaximizedPanelProvider,
+	useMaximizedPanel,
+} from "#/hooks/useMaximizedPanel";
 import { SessionDashboardProvider } from "#/hooks/useSessionDashboard";
 import {
 	getSessionDashboardFn,
@@ -164,83 +168,115 @@ function DashboardSessionRoute() {
 
 	return (
 		<SessionDashboardProvider value={providerValue}>
-			<main
-				className="terminal bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
-				style={{ height: "calc(100vh)" }}
-			>
-				<div className="flex h-full flex-col px-3 pt-3 pb-3 gap-2">
-					{/* Top bar */}
-					<div className="shrink-0">
-						<TopBar />
-					</div>
-
-					{/* Resizable body */}
-					<div className="min-h-0 flex-1">
-						{/* Outer: top row / bottom row */}
-						<Allotment vertical defaultSizes={[62, 38]} minSize={120}>
-							{/* ── Top row ── */}
-							<Allotment.Pane minSize={120}>
-								<Allotment defaultSizes={[18, 44, 38]} minSize={140}>
-									{/* Watchlist */}
-									<Allotment.Pane minSize={140}>
-										<div className="h-full px-1">
-											<Watchlist />
-										</div>
-									</Allotment.Pane>
-
-									{/* Chart */}
-									<Allotment.Pane minSize={240}>
-										<div className="h-full px-1">
-											<CandlestickChart />
-										</div>
-									</Allotment.Pane>
-
-									{/* Order book */}
-									<Allotment.Pane minSize={200}>
-										<div className="h-full px-1">
-											<OrderBookPanel />
-										</div>
-									</Allotment.Pane>
-								</Allotment>
-							</Allotment.Pane>
-							{/* ── Bottom Row ── */}
-							<Allotment.Pane minSize={120}>
-								<Allotment defaultSizes={[20, 30, 50]} minSize={140}>
-									{/* Time & Sales */}
-									<Allotment.Pane minSize={140}>
-										<div className="h-full px-1">
-											<TimeAndSales />
-										</div>
-									</Allotment.Pane>
-
-									{/* Blotter */}
-									<Allotment.Pane minSize={180}>
-										<div className="h-full px-1">
-											<Blotter />
-										</div>
-									</Allotment.Pane>
-
-									{/* Agents + Research (nested vertical split) */}
-									<Allotment.Pane minSize={200}>
-										<Allotment vertical defaultSizes={[70, 30]} minSize={100}>
-											<Allotment.Pane minSize={100}>
-												<div className="h-full px-1">
-													<AgentsPanel />
-												</div>
-											</Allotment.Pane>
-											<Allotment.Pane minSize={100}>
-												<div className="h-full px-1">
-													<ResearchFeed />
-												</div>
-											</Allotment.Pane>
-										</Allotment>
-									</Allotment.Pane>
-								</Allotment>
-							</Allotment.Pane>
-						</Allotment>
-					</div>
-				</div>
-			</main>
+			<MaximizedPanelProvider>
+				<DashboardBody />
+			</MaximizedPanelProvider>
 		</SessionDashboardProvider>
+	);
+}
+
+function panelStyle(panelId: string, maximizedId: string | null) {
+	if (maximizedId !== panelId) return undefined;
+	return {
+		position: "fixed" as const,
+		inset: 0,
+		zIndex: 50,
+		padding: 4,
+		background: "var(--terminal-bg)",
+	};
+}
+
+function DashboardBody() {
+	const { maximizedId } = useMaximizedPanel();
+
+	return (
+		<main
+			className="terminal bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
+			style={{ height: "calc(100vh)" }}
+		>
+			<div className="flex h-full flex-col px-3 pt-3 pb-3 gap-2">
+				<div className="shrink-0">
+					<TopBar />
+				</div>
+
+				<div className="min-h-0 flex-1">
+					<Allotment vertical defaultSizes={[62, 38]} minSize={120}>
+						<Allotment.Pane minSize={120}>
+							<Allotment defaultSizes={[18, 44, 38]} minSize={140}>
+								<Allotment.Pane minSize={140}>
+									<div
+										className="h-full px-1"
+										style={panelStyle("watchlist", maximizedId)}
+									>
+										<Watchlist />
+									</div>
+								</Allotment.Pane>
+
+								<Allotment.Pane minSize={240}>
+									<div
+										className="h-full px-1"
+										style={panelStyle("chart", maximizedId)}
+									>
+										<CandlestickChart />
+									</div>
+								</Allotment.Pane>
+
+								<Allotment.Pane minSize={200}>
+									<div
+										className="h-full px-1"
+										style={panelStyle("orderbook", maximizedId)}
+									>
+										<OrderBookPanel />
+									</div>
+								</Allotment.Pane>
+							</Allotment>
+						</Allotment.Pane>
+
+						<Allotment.Pane minSize={120}>
+							<Allotment defaultSizes={[20, 30, 50]} minSize={140}>
+								<Allotment.Pane minSize={140}>
+									<div
+										className="h-full px-1"
+										style={panelStyle("timeAndSales", maximizedId)}
+									>
+										<TimeAndSales />
+									</div>
+								</Allotment.Pane>
+
+								<Allotment.Pane minSize={180}>
+									<div
+										className="h-full px-1"
+										style={panelStyle("blotter", maximizedId)}
+									>
+										<Blotter />
+									</div>
+								</Allotment.Pane>
+
+								<Allotment.Pane minSize={200}>
+									<Allotment vertical defaultSizes={[70, 30]} minSize={100}>
+										<Allotment.Pane minSize={100}>
+											<div
+												className="h-full px-1"
+												style={panelStyle("agents", maximizedId)}
+											>
+												<AgentsPanel />
+											</div>
+										</Allotment.Pane>
+										<Allotment.Pane minSize={100}>
+											<div
+												className="h-full px-1"
+												style={panelStyle("research", maximizedId)}
+											>
+												<ResearchFeed />
+											</div>
+										</Allotment.Pane>
+									</Allotment>
+								</Allotment.Pane>
+							</Allotment>
+						</Allotment.Pane>
+					</Allotment>
+				</div>
+			</div>
+		</main>
 	);
 }

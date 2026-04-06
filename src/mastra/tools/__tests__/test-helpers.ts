@@ -68,6 +68,8 @@ export function createToolHarness(options: HarnessOptions = {}) {
 		researchInbox: new Map(),
 		lastAutopilotDirective: null,
 		lastLlmTick: null,
+		realizedPnl: new Map(),
+		pendingFills: [],
 		...options.stateOverrides,
 	};
 

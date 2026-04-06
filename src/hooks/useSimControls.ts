@@ -1,17 +1,10 @@
 import { useEffect, useState } from "react";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import Decimal from "decimal.js";
 import { db } from "#/db/index";
 import { commands } from "#/db/schema";
-import type { Trade, TradeData } from "#/types/market";
 import { buildSessionChannel, type SimChannelMessage } from "#/types/ws";
-import type {
-	SimRuntimeState,
-	SimRuntimeStateData,
-	TickSummary,
-	TickSummaryData,
-} from "#/types/sim";
+import type { SimRuntimeStateData } from "#/types/sim";
 import { useSimWebSocket } from "./useSimWebSocket";
 import { useSessionDashboard } from "./useSessionDashboard";
 
@@ -69,12 +62,12 @@ export const setSpeedSimFn = createServerFn({ method: "POST" })
 export function useSimControls() {
 	const { subscribe, isConnected } = useSimWebSocket();
 	const { isLive, sessionId, simState: initialState } = useSessionDashboard();
-	const [simState, setSimState] = useState<SimRuntimeState | null>(
-		convertRuntimeState(initialState),
+	const [simState, setSimState] = useState<SimRuntimeStateData | null>(
+		initialState,
 	);
 
 	useEffect(() => {
-		setSimState(convertRuntimeState(initialState));
+		setSimState(initialState);
 	}, [initialState]);
 
 	useEffect(() => {
@@ -103,34 +96,5 @@ export function useSimControls() {
 		step: async () => stepSimFn({ data: { sessionId } }),
 		setSpeed: async (speedMultiplier: number) =>
 			setSpeedSimFn({ data: { sessionId, speedMultiplier } }),
-	};
-}
-
-function convertRuntimeState(
-	state: SimRuntimeStateData | null,
-): SimRuntimeState | null {
-	if (!state) {
-		return null;
-	}
-
-	return {
-		...state,
-		lastSummary: state.lastSummary
-			? convertTickSummaryData(state.lastSummary)
-			: null,
-	};
-}
-
-function convertTickSummaryData(summary: TickSummaryData): TickSummary {
-	return {
-		...summary,
-		trades: summary.trades.map(convertTradeData),
-	};
-}
-
-function convertTradeData(trade: TradeData): Trade {
-	return {
-		...trade,
-		price: new Decimal(trade.price),
 	};
 }

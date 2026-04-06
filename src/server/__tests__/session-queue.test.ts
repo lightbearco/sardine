@@ -58,6 +58,10 @@ describe("session queueing", () => {
 			activeGroupSize: 5,
 			tickIntervalMs: 1000,
 			simulatedTickDuration: 5,
+			llmConcurrency: 10,
+			llmTimeoutMs: 15000,
+			researchFrequency: 20,
+			alpacaDataTypes: ["snapshots"],
 			traderDistribution: {
 				tier1: 1,
 				hedgeFund: 2,

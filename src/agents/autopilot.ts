@@ -18,7 +18,9 @@ const OPEN_STATUSES: ReadonlySet<Order["status"]> = new Set([
 ]);
 
 function parsePriceCondition(condition: string): PriceCondition | null {
-	const match = /^\s*price\s*(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*$/i.exec(condition);
+	const match = /^\s*price\s*(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)\s*$/i.exec(
+		condition,
+	);
 	if (!match) {
 		return null;
 	}
@@ -86,7 +88,9 @@ function buildAutopilotOrderId(
 	standingOrder: AutopilotStandingOrder,
 ): string {
 	const priceToken =
-		standingOrder.type === "limit" ? String(standingOrder.price ?? 0) : "market";
+		standingOrder.type === "limit"
+			? String(standingOrder.price ?? 0)
+			: "market";
 
 	return [
 		"autopilot",
@@ -106,7 +110,29 @@ export function executeAutopilot(
 	currentPrices: ReadonlyMap<string, number>,
 	simTick: number,
 ): AutopilotExecutionResult {
-	const directive = agent.lastAutopilotDirective;
+	let directive = agent.lastAutopilotDirective;
+
+	if (!directive && agent.positions.size > 0) {
+		const standingOrders: AutopilotStandingOrder[] = [];
+		let count = 0;
+		for (const [symbol, position] of agent.positions) {
+			if (count >= 3) break;
+			const price = currentPrices.get(symbol);
+			if (price === undefined || price <= 0) continue;
+			standingOrders.push({
+				symbol,
+				side: "sell",
+				type: "limit",
+				price: Number((price * 1.05).toFixed(2)),
+				qty: Math.max(1, Math.floor(position.qty * 0.25)),
+			});
+			count++;
+		}
+		directive = {
+			standingOrders,
+			holdPositions: Array.from(agent.positions.keys()),
+		};
+	}
 
 	if (!directive) {
 		return {

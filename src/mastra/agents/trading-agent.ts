@@ -99,6 +99,7 @@ ${constraints && constraints.length > 0 ? constraints.map((constraint) => `- ${c
 - Use marketDataTool before trading when price discovery matters.
 - Use portfolioTool when you need to understand existing exposure or P&L.
 - Use orderTool to place any desired trade.
+- **Order execution urgency**: Use market orders when you need immediate fills. For limit orders, price aggressively — at or through the best opposite side — to maximize fill probability. Passive limit orders far from the spread will not execute.
 - If you do not want to trade, return an empty ordersPlaced array.
 
 ## Response Contract

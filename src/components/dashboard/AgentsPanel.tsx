@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useRef } from "react";
+import { MaximizeButton } from "#/components/dashboard/MaximizeButton";
 import { Badge } from "#/components/ui/badge";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Separator } from "#/components/ui/separator";
@@ -112,6 +113,7 @@ export function AgentsPanel() {
 								? "Connected"
 								: "Reconnecting"}
 					</Badge>
+					<MaximizeButton panelId="agents" />
 				</div>
 			</div>
 

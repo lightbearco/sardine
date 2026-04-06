@@ -23,7 +23,10 @@ import {
 	type SimChannelMessage,
 } from "#/types/ws";
 import type { WatchlistSummaryPayload } from "#/types/watchlist";
-import { getSessionSymbolFn } from "./useSimulationSessions";
+import {
+	getSessionDashboardFn,
+	getSessionSymbolFn,
+} from "./useSimulationSessions";
 import { useSimWebSocket } from "./useSimWebSocket";
 
 const MAX_AGENT_EVENTS = 200;
@@ -85,7 +88,6 @@ function buildInitialSummaries(
 					high: lastBar?.high ?? null,
 					low: lastBar?.low ?? null,
 					spread: snapshot?.spread ?? null,
-					divergencePct: entry.divergencePct ?? null,
 					lastBar,
 					snapshot,
 					lastTrade: undefined,
@@ -173,7 +175,7 @@ export function SessionDashboardProvider({
 	children: ReactNode;
 	value: SessionDashboardProviderValue;
 }) {
-	const { subscribe, isConnected } = useSimWebSocket();
+	const { subscribe, isConnected, reconnectCount } = useSimWebSocket();
 	const router = useRouter();
 	const {
 		sessionId,
@@ -201,7 +203,10 @@ export function SessionDashboardProvider({
 	);
 
 	const isPending = effectiveSession.status === "pending";
-	const effectiveIsLive = isLive && effectiveSession.status === "active";
+	const effectiveIsLive =
+		isLive &&
+		(effectiveSession.status === "active" ||
+			effectiveSession.status === "suspended");
 
 	const baseValue = useMemo<SessionDashboardContextValue>(
 		() => ({
@@ -510,6 +515,33 @@ export function SessionDashboardProvider({
 
 		return unsubscribe;
 	}, [effectiveIsLive, isPending, sessionId, subscribe]);
+
+	useEffect(() => {
+		if (!effectiveIsLive || reconnectCount === 0) {
+			return;
+		}
+
+		void getSessionDashboardFn({ data: { sessionId } })
+			.then((fresh) => {
+				if (!fresh) return;
+				setWatchlistSummaries(buildInitialSummaries(fresh.watchlist));
+				setResearchNotes(fresh.researchNotes.slice(0, MAX_RESEARCH_NOTES));
+				setAgentEvents(fresh.agentEvents);
+			})
+			.catch((err: unknown) => {
+				console.error("Failed to re-hydrate after reconnect", err);
+			});
+
+		void getSessionSymbolFn({ data: { sessionId, symbol } })
+			.then((next) => {
+				if (next) {
+					setSymbolData(next);
+				}
+			})
+			.catch((err: unknown) => {
+				console.error("Failed to re-hydrate symbol data after reconnect", err);
+			});
+	}, [effectiveIsLive, reconnectCount, sessionId, symbol]);
 
 	const liveValue = useMemo<SessionDashboardLiveContextValue>(
 		() => ({

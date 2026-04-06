@@ -2,11 +2,15 @@ import {
 	createAlpacaClient,
 	type AlpacaBarSnapshot,
 	type AlpacaClient,
+	type AlpacaDataType,
+	type AlpacaMarketSnapshot,
 	type AlpacaQuoteSnapshot,
+	type AlpacaTradeSnapshot,
 } from "#/alpaca/client";
 
 const FALLBACK_SEED_PRICE = 150;
 const FALLBACK_SPREAD = 0.1;
+const DEFAULT_DATA_TYPES: AlpacaDataType[] = ["snapshots"];
 
 export interface BootstrapSymbolMarketData {
 	symbol: string;
@@ -16,6 +20,8 @@ export interface BootstrapSymbolMarketData {
 	lastPrice: number;
 	spread: number;
 	bars: AlpacaBarSnapshot[];
+	trades: AlpacaTradeSnapshot[];
+	snapshot: AlpacaMarketSnapshot | null;
 }
 
 export interface BootstrapMarketData {
@@ -39,6 +45,8 @@ export function buildBootstrapMarketData(input: {
 	symbols: string[];
 	quotes: Map<string, AlpacaQuoteSnapshot>;
 	bars: Map<string, AlpacaBarSnapshot[]>;
+	trades?: Map<string, AlpacaTradeSnapshot[]>;
+	snapshots?: Map<string, AlpacaMarketSnapshot>;
 }): BootstrapMarketData {
 	return {
 		symbols: Object.fromEntries(
@@ -74,6 +82,8 @@ export function buildBootstrapMarketData(input: {
 						lastPrice,
 						spread: Number((askPrice - bidPrice).toFixed(4)),
 						bars: history,
+						trades: input.trades?.get(symbol) ?? [],
+						snapshot: input.snapshots?.get(symbol) ?? null,
 					},
 				];
 			}),
@@ -84,15 +94,69 @@ export function buildBootstrapMarketData(input: {
 export async function loadBootstrapMarketData(
 	symbols: string[],
 	client: AlpacaClient = createAlpacaClient(),
+	dataTypes: AlpacaDataType[] = DEFAULT_DATA_TYPES,
 ): Promise<BootstrapMarketData> {
-	const [quotes, bars] = await Promise.all([
-		client.getLatestQuotes(symbols),
-		client.getBars(symbols, "1Day", 60),
+	const fetchQuotes = dataTypes.includes("quotes")
+		? client.getLatestQuotes(symbols)
+		: Promise.resolve(
+				new Map(
+					symbols.map((s) => [
+						s,
+						{
+							symbol: s,
+							bidPrice: null,
+							askPrice: null,
+							midPrice: null,
+							lastPrice: null,
+							spread: null,
+							timestamp: null,
+						} satisfies AlpacaQuoteSnapshot,
+					]),
+				),
+			);
+
+	const fetchBars = dataTypes.includes("bars")
+		? client.getBars(symbols, "1Day", 60)
+		: Promise.resolve(
+				new Map(symbols.map((s) => [s, [] as AlpacaBarSnapshot[]])),
+			);
+
+	const fetchTrades = dataTypes.includes("trades")
+		? client.getLatestTrades(symbols).then((m) => {
+				const grouped = new Map<string, AlpacaTradeSnapshot[]>();
+				for (const [sym, trade] of m) {
+					grouped.set(sym, [trade]);
+				}
+				return grouped;
+			})
+		: Promise.resolve(new Map<string, AlpacaTradeSnapshot[]>());
+
+	const fetchSnapshots = dataTypes.includes("snapshots")
+		? client.getSnapshots(symbols)
+		: Promise.resolve(new Map<string, AlpacaMarketSnapshot>());
+
+	const [quotes, bars, trades, snapshots] = await Promise.all([
+		fetchQuotes,
+		fetchBars,
+		fetchTrades,
+		fetchSnapshots,
 	]);
+
+	if (!dataTypes.includes("quotes")) {
+		for (const [symbol, snapshot] of snapshots) {
+			if (snapshot?.dailyQuote) {
+				quotes.set(symbol, snapshot.dailyQuote);
+			}
+		}
+	}
 
 	return buildBootstrapMarketData({
 		symbols,
 		quotes,
 		bars,
+		trades,
+		snapshots,
 	});
 }
+
+export { DEFAULT_DATA_TYPES };

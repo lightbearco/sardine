@@ -18,10 +18,7 @@ import {
 } from "#/db/schema";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SimClock } from "#/engine/sim/SimClock";
-import {
-	DEV_TICKERS,
-	type Sector,
-} from "#/lib/constants";
+import { DEV_TICKERS, type Sector } from "#/lib/constants";
 import type { TraderDistribution } from "#/lib/simulation-session";
 import { serializeOrderBookSnapshot } from "#/server/sessions";
 import type { AgentConfig, AutopilotDirective, Position } from "#/types/agent";
@@ -87,6 +84,7 @@ export interface RestoreSimulationInput {
 			currentCash: number;
 			currentNav: number;
 			positions: PersistedPositionRecord | null;
+			realizedPnl: Record<string, number> | null;
 			lastAutopilotDirective: AutopilotDirective | null;
 			llmGroup: number;
 		}>;
@@ -247,6 +245,17 @@ function deserializePositions(
 	);
 }
 
+function deserializeRealizedPnl(
+	realizedPnl: Record<string, number> | null | undefined,
+): Map<string, Decimal> {
+	return new Map(
+		Object.entries(realizedPnl ?? {}).map(([symbol, pnl]) => [
+			symbol,
+			new Decimal(pnl),
+		]),
+	);
+}
+
 function deserializeOrder(input: {
 	id: string;
 	tick: number;
@@ -335,7 +344,10 @@ function resolveSeedSpread(
 	return Decimal.max(spread, MIN_SPREAD);
 }
 
-function resolveHistoricalTick(symbols: string[], marketData?: BootstrapMarketData | null): number {
+function resolveHistoricalTick(
+	symbols: string[],
+	marketData?: BootstrapMarketData | null,
+): number {
 	return Math.max(
 		0,
 		...symbols.map((symbol) => marketData?.symbols[symbol]?.bars.length ?? 0),
@@ -377,7 +389,11 @@ function selectPortfolioSymbols(input: {
 	const restricted = new Set(input.config.restrictedSymbols);
 	const bySector = input.symbols.filter((symbol) => {
 		const sector = getSymbolSector(symbol);
-		return sector !== null && input.config.sectors.includes(sector) && !restricted.has(symbol);
+		return (
+			sector !== null &&
+			input.config.sectors.includes(sector) &&
+			!restricted.has(symbol)
+		);
 	});
 	const fallback = input.symbols.filter((symbol) => !restricted.has(symbol));
 	const pool = bySector.length > 0 ? bySector : fallback;
@@ -386,9 +402,11 @@ function selectPortfolioSymbols(input: {
 		return [];
 	}
 
-	let targetCount = input.config.tier === "tier1" ? 5 : input.config.tier === "tier2" ? 4 : 2;
+	let targetCount =
+		input.config.tier === "tier1" ? 5 : input.config.tier === "tier2" ? 4 : 2;
 	if (input.config.entityType.includes("market-maker")) {
-		targetCount = input.config.tier === "tier1" ? 6 : input.config.tier === "tier2" ? 5 : 3;
+		targetCount =
+			input.config.tier === "tier1" ? 6 : input.config.tier === "tier2" ? 5 : 3;
 	} else if (input.config.entityType.includes("pension")) {
 		targetCount = input.config.tier === "tier1" ? 5 : 4;
 	} else if (input.config.strategy.includes("depth-provider")) {
@@ -400,8 +418,14 @@ function selectPortfolioSymbols(input: {
 	return input.rng.shuffle(pool).slice(0, Math.min(targetCount, pool.length));
 }
 
-function resolveInvestedCapitalRatio(config: AgentConfig, rng: SeededRandom): number {
-	if (config.entityType.includes("market-maker") || config.strategy.includes("depth-provider")) {
+function resolveInvestedCapitalRatio(
+	config: AgentConfig,
+	rng: SeededRandom,
+): number {
+	if (
+		config.entityType.includes("market-maker") ||
+		config.strategy.includes("depth-provider")
+	) {
 		return Number(rng.float(0.15, 0.3).toFixed(4));
 	}
 
@@ -433,6 +457,7 @@ function buildAutopilotDirective(input: {
 	symbols: string[];
 	priceBySymbol: Map<string, Decimal>;
 	rng: SeededRandom;
+	positionSymbols?: string[];
 }) {
 	const selectedSymbols = selectPortfolioSymbols({
 		config: input.config,
@@ -440,7 +465,8 @@ function buildAutopilotDirective(input: {
 		rng: input.rng,
 	});
 	const side =
-		input.config.strategy.includes("value") || input.config.entityType.includes("pension")
+		input.config.strategy.includes("value") ||
+		input.config.entityType.includes("pension")
 			? ("buy" as const)
 			: input.config.strategy.includes("momentum")
 				? ("buy" as const)
@@ -448,22 +474,45 @@ function buildAutopilotDirective(input: {
 					? ("buy" as const)
 					: ("sell" as const);
 
-	return {
-		standingOrders: selectedSymbols.slice(0, 2).map((symbol) => {
-			const referencePrice = input.priceBySymbol.get(symbol) ?? DEFAULT_SEED_PRICE;
-			const price =
-				side === "buy"
-					? referencePrice.mul("0.9985")
-					: referencePrice.mul("1.0015");
+	const standingOrders = selectedSymbols.slice(0, 2).map((symbol) => {
+		const referencePrice =
+			input.priceBySymbol.get(symbol) ?? DEFAULT_SEED_PRICE;
+		const price =
+			side === "buy"
+				? referencePrice.mul("0.9985")
+				: referencePrice.mul("1.0015");
 
-			return {
-				symbol,
-				side,
-				type: "limit" as const,
-				price: Number(price.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString()),
-				qty: Math.max(1, Math.floor(5 + input.config.capital / 100000)),
-			};
-		}),
+		return {
+			symbol,
+			side,
+			type: "limit" as const,
+			price: Number(price.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString()),
+			qty: Math.max(1, Math.floor(5 + input.config.capital / 100000)),
+		};
+	});
+
+	const heldSymbols = input.positionSymbols ?? [];
+	const sideSymbols = new Set(selectedSymbols.slice(0, 2));
+	for (const symbol of heldSymbols.slice(0, 2)) {
+		if (sideSymbols.has(symbol)) continue;
+		const referencePrice =
+			input.priceBySymbol.get(symbol) ?? DEFAULT_SEED_PRICE;
+		standingOrders.push({
+			symbol,
+			side: "sell",
+			type: "limit",
+			price: Number(
+				referencePrice
+					.mul("1.05")
+					.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+					.toString(),
+			),
+			qty: Math.max(1, Math.floor(3 + input.config.capital / 150000)),
+		});
+	}
+
+	return {
+		standingOrders,
 		holdPositions: [],
 	};
 }
@@ -530,7 +579,9 @@ function seedAgentPortfolio(input: {
 	const cash = Decimal.max(new Decimal(input.config.capital).minus(spent), 0);
 	const markedValue = Array.from(positions.entries()).reduce(
 		(total, [symbol, position]) =>
-			total.plus((input.priceBySymbol.get(symbol) ?? position.avgCost).mul(position.qty)),
+			total.plus(
+				(input.priceBySymbol.get(symbol) ?? position.avgCost).mul(position.qty),
+			),
 		new Decimal(0),
 	);
 
@@ -552,7 +603,9 @@ function seedAgentState(input: {
 			symbols: input.symbols,
 			priceBySymbol: input.priceBySymbol,
 		});
-		const directiveRng = createSeededRandom(hashString(`${entry.config.id}:directive`));
+		const directiveRng = createSeededRandom(
+			hashString(`${entry.config.id}:directive`),
+		);
 
 		input.agentRegistry.updateState(entry.config.id, {
 			cash: seeded.cash,
@@ -563,25 +616,36 @@ function seedAgentState(input: {
 				symbols: input.symbols,
 				priceBySymbol: input.priceBySymbol,
 				rng: directiveRng,
+				positionSymbols: Array.from(seeded.positions.keys()),
 			}),
 		});
 	}
 }
 
-export async function bootstrapSimulation(input: BootstrapSimulationInput): Promise<BootstrapSimulationResult> {
+export async function bootstrapSimulation(
+	input: BootstrapSimulationInput,
+): Promise<BootstrapSimulationResult> {
 	const matchingEngine = new MatchingEngine();
 	matchingEngine.initialize(input.symbols);
 
-	const historicalTickCount = resolveHistoricalTick(input.symbols, input.marketData);
-	const { agentRegistry, researchWorkers, seedAgentId } = buildSimulationActors({
-		sessionId: input.sessionId,
-		seed: input.seed,
-		agentCount: input.agentCount,
-		groupCount: input.groupCount,
-		traderDistribution: input.traderDistribution,
-	});
+	const historicalTickCount = resolveHistoricalTick(
+		input.symbols,
+		input.marketData,
+	);
+	const { agentRegistry, researchWorkers, seedAgentId } = buildSimulationActors(
+		{
+			sessionId: input.sessionId,
+			seed: input.seed,
+			agentCount: input.agentCount,
+			groupCount: input.groupCount,
+			traderDistribution: input.traderDistribution,
+		},
+	);
 	const priceBySymbol = new Map(
-		input.symbols.map((symbol) => [symbol, resolveSeedMidPrice(symbol, input.marketData)]),
+		input.symbols.map((symbol) => [
+			symbol,
+			resolveSeedMidPrice(symbol, input.marketData),
+		]),
 	);
 	const seedOrders: Order[] = [];
 
@@ -607,7 +671,10 @@ export async function bootstrapSimulation(input: BootstrapSimulationInput): Prom
 		symbols: input.symbols,
 		priceBySymbol,
 	});
-	const agentRows = serializeAgentEntriesForDb(agentRegistry.getAll(), input.sessionId);
+	const agentRows = serializeAgentEntriesForDb(
+		agentRegistry.getAll(),
+		input.sessionId,
+	);
 	const researchRows = researchWorkers.map((worker) => ({
 		sessionId: input.sessionId,
 		id: worker.id,
@@ -741,6 +808,7 @@ export function restoreSimulation(
 			cash: new Decimal(persisted.currentCash),
 			nav: new Decimal(persisted.currentNav),
 			positions: deserializePositions(persisted.positions),
+			realizedPnl: deserializeRealizedPnl(persisted.realizedPnl),
 			lastAutopilotDirective:
 				persisted.lastAutopilotDirective ?? entry.state.lastAutopilotDirective,
 		});
@@ -750,7 +818,10 @@ export function restoreSimulation(
 
 	for (const persistedOrder of input.persistedState.openOrders) {
 		const order = deserializeOrder(persistedOrder);
-		const replayedTrades = matchingEngine.processOrder(order, persistedOrder.tick);
+		const replayedTrades = matchingEngine.processOrder(
+			order,
+			persistedOrder.tick,
+		);
 		if (replayedTrades.length > 0) {
 			console.warn(
 				`[Bootstrap] Replay for session ${input.sessionId} order ${order.id} produced ${replayedTrades.length} trades while rebuilding the live book.`,
@@ -761,14 +832,16 @@ export function restoreSimulation(
 			continue;
 		}
 
-		const openOrders = openOrdersByAgentId.get(order.agentId) ?? new Map<string, Order>();
+		const openOrders =
+			openOrdersByAgentId.get(order.agentId) ?? new Map<string, Order>();
 		openOrders.set(order.id, order);
 		openOrdersByAgentId.set(order.agentId, openOrders);
 	}
 
 	for (const entry of agentRegistry.getAll()) {
 		agentRegistry.updateState(entry.config.id, {
-			openOrders: openOrdersByAgentId.get(entry.config.id) ?? new Map<string, Order>(),
+			openOrders:
+				openOrdersByAgentId.get(entry.config.id) ?? new Map<string, Order>(),
 		});
 	}
 

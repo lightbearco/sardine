@@ -49,6 +49,8 @@ function makeState(
 		researchInbox: new Map(),
 		lastAutopilotDirective: null,
 		lastLlmTick: null,
+		realizedPnl: new Map(),
+		pendingFills: [],
 		...overrides,
 	};
 }

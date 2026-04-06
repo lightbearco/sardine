@@ -13,7 +13,7 @@ function LandingPage() {
 				<div className="max-w-3xl space-y-5">
 					<div className="space-y-3">
 						<h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-							World's most advanced market simulation.
+							The Agent's Stock Market
 						</h1>
 						<p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
 							Our platform simulates financial markets using over 1,000
