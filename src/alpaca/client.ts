@@ -249,6 +249,7 @@ export function createAlpacaClient(
 				path: "/v2/stocks/quotes/latest",
 				query: {
 					symbols: symbols.join(","),
+					feed: "iex",
 				},
 			});
 			const quoteMap = new Map(Object.entries(response.quotes ?? {}));
@@ -272,6 +273,7 @@ export function createAlpacaClient(
 				start: start.toISOString(),
 				end: end.toISOString(),
 				limit,
+				feed: "iex",
 			});
 
 			return new Map(
@@ -290,6 +292,7 @@ export function createAlpacaClient(
 				path: "/v2/stocks/trades/latest",
 				query: {
 					symbols: symbols.join(","),
+					feed: "iex",
 				},
 			});
 			const tradeMap = new Map(Object.entries(response.trades ?? {}));
@@ -320,6 +323,7 @@ export function createAlpacaClient(
 				path: "/v2/stocks/snapshots",
 				query: {
 					symbols: symbols.join(","),
+					feed: "iex",
 				},
 			});
 			const snapshotMap = new Map(Object.entries(response.snapshots ?? {}));
