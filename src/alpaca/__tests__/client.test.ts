@@ -97,6 +97,200 @@ describe("alpaca client", () => {
 		]);
 	});
 
+	it("normalizes latest trades and fills missing symbols with zero fallback", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					trades: {
+						AAPL: {
+							Symbol: "AAPL",
+							Price: 150.5,
+							Size: 200,
+							Timestamp: "2026-04-05T10:00:00Z",
+							Exchange: "Q",
+							Conditions: ["@", "T"],
+							ID: 1,
+							Tape: "C",
+						},
+					},
+				}),
+			}),
+		);
+		const sdk = {
+			timeframeUnit: { DAY: "day" },
+			newTimeframe: vi.fn(),
+			getMultiBarsV2: vi.fn(),
+			createOrder: vi.fn(),
+		};
+		const client = createAlpacaClient(TEST_ENV, () => sdk as never);
+
+		const trades = await client.getLatestTrades(["AAPL", "MSFT"]);
+
+		expect(trades.get("AAPL")).toEqual({
+			symbol: "AAPL",
+			price: 150.5,
+			size: 200,
+			timestamp: "2026-04-05T10:00:00Z",
+			exchange: "Q",
+			conditions: ["@", "T"],
+		});
+		expect(trades.get("MSFT")).toEqual({
+			symbol: "MSFT",
+			price: 0,
+			size: 0,
+			timestamp: "",
+			exchange: "",
+			conditions: [],
+		});
+	});
+
+	it("normalizes full market snapshots", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					snapshots: {
+						AAPL: {
+							DailyBar: {
+								Symbol: "AAPL",
+								OpenPrice: 99,
+								HighPrice: 102,
+								LowPrice: 98,
+								ClosePrice: 101,
+								Volume: 1000,
+								Timestamp: "2026-04-05T00:00:00Z",
+							},
+							LatestTrade: {
+								Symbol: "AAPL",
+								Price: 101,
+								Size: 50,
+								Timestamp: "2026-04-05T10:00:00Z",
+								Exchange: "Q",
+								Conditions: [],
+								ID: 1,
+								Tape: "C",
+							},
+							LatestQuote: {
+								BidPrice: 100.5,
+								AskPrice: 101.5,
+								Timestamp: "2026-04-05T10:00:00Z",
+							},
+							PrevDailyBar: {
+								Symbol: "AAPL",
+								OpenPrice: 97,
+								HighPrice: 100,
+								LowPrice: 96,
+								ClosePrice: 99,
+								Volume: 800,
+								Timestamp: "2026-04-04T00:00:00Z",
+							},
+						},
+					},
+				}),
+			}),
+		);
+		const sdk = {
+			timeframeUnit: { DAY: "day" },
+			newTimeframe: vi.fn(),
+			getMultiBarsV2: vi.fn(),
+			createOrder: vi.fn(),
+		};
+		const client = createAlpacaClient(TEST_ENV, () => sdk as never);
+
+		const snapshots = await client.getSnapshots(["AAPL"]);
+
+		expect(snapshots.get("AAPL")).toMatchObject({
+			symbol: "AAPL",
+			dailyBar: {
+				symbol: "AAPL",
+				open: 99,
+				high: 102,
+				low: 98,
+				close: 101,
+				volume: 1000,
+				timestamp: "2026-04-05T00:00:00Z",
+			},
+			dailyTrade: {
+				symbol: "AAPL",
+				price: 101,
+				size: 50,
+				timestamp: "2026-04-05T10:00:00Z",
+				exchange: "Q",
+				conditions: [],
+			},
+			dailyQuote: {
+				symbol: "AAPL",
+				bidPrice: 100.5,
+				askPrice: 101.5,
+				midPrice: 101,
+				spread: 1,
+			},
+			prevDailyBar: {
+				symbol: "AAPL",
+				open: 97,
+				high: 100,
+				low: 96,
+				close: 99,
+				volume: 800,
+				timestamp: "2026-04-04T00:00:00Z",
+			},
+		});
+	});
+
+	it("handles snapshots with missing nested data", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					snapshots: {
+						AAPL: {
+							DailyBar: {
+								Symbol: "AAPL",
+								OpenPrice: 99,
+								HighPrice: 102,
+								LowPrice: 98,
+								ClosePrice: 101,
+								Volume: 1000,
+								Timestamp: "2026-04-05T00:00:00Z",
+							},
+						},
+					},
+				}),
+			}),
+		);
+		const sdk = {
+			timeframeUnit: { DAY: "day" },
+			newTimeframe: vi.fn(),
+			getMultiBarsV2: vi.fn(),
+			createOrder: vi.fn(),
+		};
+		const client = createAlpacaClient(TEST_ENV, () => sdk as never);
+
+		const snapshots = await client.getSnapshots(["AAPL", "MSFT"]);
+
+		expect(snapshots.get("AAPL")).toMatchObject({
+			symbol: "AAPL",
+			dailyBar: {
+				symbol: "AAPL",
+				close: 101,
+			},
+			dailyTrade: null,
+			dailyQuote: null,
+			prevDailyBar: null,
+		});
+		expect(snapshots.get("MSFT")).toEqual({
+			symbol: "MSFT",
+			dailyBar: null,
+			dailyTrade: null,
+			dailyQuote: null,
+			prevDailyBar: null,
+		});
+	});
+
 	it("maps submitted orders to normalized results", async () => {
 		const sdk = {
 			timeframeUnit: { DAY: "day" },

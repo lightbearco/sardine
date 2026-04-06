@@ -60,16 +60,15 @@ describe("MatchingEngine", () => {
 		expect(msftSnap.asks[0].price.eq(300)).toBe(true);
 	});
 
-	it("throws when processing an order for unknown symbol", () => {
+	it("returns empty trades for unknown symbol and does not throw", () => {
 		const engine = new MatchingEngine();
 		engine.initialize(["AAPL"]);
 
-		expect(() =>
-			engine.processOrder(
-				makeOrder({ side: "buy", symbol: "GOOGL" }),
-				1,
-			),
-		).toThrow("No order book for symbol: GOOGL");
+		const order = makeOrder({ side: "buy", symbol: "GOOGL" });
+		const trades = engine.processOrder(order, 1);
+
+		expect(trades).toEqual([]);
+		expect(order.status).toBe("cancelled");
 	});
 
 	it("batch processOrders accumulates trades", () => {
@@ -149,14 +148,7 @@ describe("MatchingEngine", () => {
 		const engine = new MatchingEngine();
 		engine.initialize(["AAPL"]);
 
-		engine.seedBook(
-			"AAPL",
-			new Decimal(150),
-			new Decimal("0.10"),
-			5,
-			100,
-			0,
-		);
+		engine.seedBook("AAPL", new Decimal(150), new Decimal("0.10"), 5, 100, 0);
 
 		const snap = engine.getSnapshot("AAPL");
 		expect(snap.bids).toHaveLength(5);

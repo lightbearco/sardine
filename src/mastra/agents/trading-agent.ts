@@ -73,9 +73,38 @@ export const tradingAgent = new Agent({
 		const traits = asStringArray(requestContext?.get("personality-traits"));
 		const biases = asStringArray(requestContext?.get("behavioral-biases"));
 		const constraints = asStringArray(requestContext?.get("constraints"));
+		const strategy = requestContext?.get("strategy") ?? "opportunistic";
+		const riskTolerance = requestContext?.get("risk-tolerance");
+		const mandateSectors = asStringArray(
+			requestContext?.get("mandate-sectors"),
+		);
+		const maxPositionPct = requestContext?.get("max-position-pct");
+		const maxInventoryPerName = requestContext?.get("max-inventory-per-name");
+
+		const constraintLines: string[] = [];
+		if (constraints && constraints.length > 0) {
+			constraintLines.push(...constraints.map((c) => `- ${c}`));
+		} else {
+			constraintLines.push(
+				"- Trade within your mandate, size risk deliberately, and respect tool validation.",
+			);
+		}
+		if (maxPositionPct !== undefined) {
+			constraintLines.push(
+				`- System max position size: ${(maxPositionPct * 100).toFixed(1)}% of NAV.`,
+			);
+		}
+		if (maxInventoryPerName !== undefined) {
+			constraintLines.push(
+				`- System max inventory per name: $${maxInventoryPerName.toLocaleString()}.`,
+			);
+		}
 
 		return `
 ${persona}
+
+## Your Strategy
+${strategy}
 
 ## Your Current Agenda
 ${agenda}
@@ -89,17 +118,22 @@ ${goal}
 ## Your Personality
 Traits: ${listOrFallback(traits, "adaptable, opportunistic, risk-aware")}
 Known biases: ${listOrFallback(biases, "none explicitly noted")}
+Risk tolerance: ${riskTolerance !== undefined ? `${(riskTolerance * 100).toFixed(0)}% (0=very conservative, 100=very aggressive)` : "moderate"}
+
+## Mandate Sectors
+${mandateSectors && mandateSectors.length > 0 ? mandateSectors.join(", ") : "No sector restrictions"}
 
 ## Constraints
-${constraints && constraints.length > 0 ? constraints.map((constraint) => `- ${constraint}`).join("\n") : "- Trade within your mandate, size risk deliberately, and respect tool validation."}
+${constraintLines.join("\n")}
 
 ## Operating Rules
 - Stay fully in character and let your stated traits and biases shape your behavior.
 - Use firecrawlTool to scrape a news URL when you want current market context before deciding.
 - Use marketDataTool before trading when price discovery matters.
 - Use portfolioTool when you need to understand existing exposure or P&L.
-- Use orderTool to place any desired trade.
+- Use orderTool to place trades. You may submit multiple orders in a single turn — call orderTool once per order, then include all confirmations in ordersPlaced.
 - **Order execution urgency**: Use market orders when you need immediate fills. For limit orders, price aggressively — at or through the best opposite side — to maximize fill probability. Passive limit orders far from the spread will not execute.
+- Consider multi-leg strategies: pairs trades, scaling in/out, hedging existing positions, or rebalancing across multiple names.
 - If you do not want to trade, return an empty ordersPlaced array.
 
 ## Response Contract

@@ -1,6 +1,7 @@
 import { RequestContext } from "@mastra/core/request-context";
+import type Decimal from "decimal.js";
 import type { AgentConfig, AgentState, Position } from "#/types/agent";
-import type { Order } from "#/types/market";
+import type { Order, Trade } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
 import { serializeAgentEntriesForDb } from "./persistence";
 
@@ -22,12 +23,23 @@ type SnapshotResearchNote = ResearchNote;
 
 export interface AgentRegistrySnapshotEntry {
 	config: AgentConfig;
-	state: Omit<AgentState, "cash" | "nav" | "positions" | "openOrders" | "researchInbox"> & {
+	state: Omit<
+		AgentState,
+		| "cash"
+		| "nav"
+		| "positions"
+		| "openOrders"
+		| "researchInbox"
+		| "realizedPnl"
+		| "pendingFills"
+	> & {
 		cash: string;
 		nav: string;
 		positions: Record<string, SnapshotPosition>;
 		openOrders: Record<string, SnapshotOrder>;
 		researchInbox: Record<string, SnapshotResearchNote>;
+		realizedPnl: Record<string, string>;
+		pendingFills: Trade[];
 	};
 	requestContext: Record<string, unknown>;
 }
@@ -110,7 +122,11 @@ export class AgentRegistry {
 						...this.serializeState(entry.state),
 						positions: this.serializePositions(entry.state.positions),
 						openOrders: this.serializeOpenOrders(entry.state.openOrders),
-						researchInbox: this.serializeResearchInbox(entry.state.researchInbox),
+						researchInbox: this.serializeResearchInbox(
+							entry.state.researchInbox,
+						),
+						realizedPnl: this.serializeRealizedPnl(entry.state.realizedPnl),
+						pendingFills: [],
 					},
 					requestContext: entry.requestContext.toJSON() as Record<
 						string,
@@ -145,7 +161,11 @@ export class AgentRegistry {
 		state: AgentState,
 	): Omit<
 		AgentRegistrySnapshotEntry["state"],
-		"positions" | "openOrders" | "researchInbox"
+		| "positions"
+		| "openOrders"
+		| "researchInbox"
+		| "realizedPnl"
+		| "pendingFills"
 	> {
 		return {
 			...state,
@@ -196,6 +216,17 @@ export class AgentRegistry {
 		);
 	}
 
+	private serializeRealizedPnl(
+		realizedPnl: Map<string, Decimal>,
+	): Record<string, string> {
+		return Object.fromEntries(
+			Array.from(realizedPnl.entries(), ([symbol, pnl]) => [
+				symbol,
+				pnl.toString(),
+			]),
+		);
+	}
+
 	private normalizeState(state: AgentState): AgentState {
 		return {
 			...state,
@@ -205,10 +236,11 @@ export class AgentRegistry {
 
 	private pruneOpenOrders(openOrders: Map<string, Order>): Map<string, Order> {
 		return new Map(
-			Array.from(openOrders.entries()).filter(([, order]) =>
-				order.status === "pending" ||
-				order.status === "open" ||
-				order.status === "partial",
+			Array.from(openOrders.entries()).filter(
+				([, order]) =>
+					order.status === "pending" ||
+					order.status === "open" ||
+					order.status === "partial",
 			),
 		);
 	}

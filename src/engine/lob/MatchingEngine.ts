@@ -1,7 +1,10 @@
 import Decimal from "decimal.js";
 import { nanoid } from "nanoid";
+import { createLogger } from "#/lib/logger";
 import type { LOBSnapshot, Order, Trade } from "#/types/market.ts";
 import { LimitOrderBook } from "./LimitOrderBook.ts";
+
+const log = createLogger("MatchingEngine");
 
 export class MatchingEngine {
 	private books = new Map<string, LimitOrderBook>();
@@ -20,8 +23,9 @@ export class MatchingEngine {
 			order.llmReasoning = order.llmReasoning
 				? `${order.llmReasoning}\n\n[system] unsupported_symbol:${order.symbol}`
 				: `[system] unsupported_symbol:${order.symbol}`;
-			console.warn(
-				`[MatchingEngine] Unsupported symbol ${order.symbol}; skipping order ${order.id}`,
+			log.warn(
+				{ orderId: order.id, symbol: order.symbol },
+				"unsupported symbol; skipping order",
 			);
 			return [];
 		}

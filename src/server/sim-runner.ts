@@ -12,6 +12,7 @@ import {
 } from "#/alpaca/client";
 import { loadBootstrapMarketData } from "#/alpaca/live-feed";
 import { db } from "#/db/index";
+import { createLogger } from "#/lib/logger";
 import {
 	agentEvents as agentEventsTable,
 	agents as agentsTable,
@@ -55,6 +56,8 @@ import {
 } from "#/types/ws";
 import { broadcaster } from "./ws/broadcaster";
 import { startSimWebSocketServer } from "./ws/SimWebSocketServer";
+
+const log = createLogger("SimRunner");
 
 function serializeRuntimeStateForBroadcast(
 	state: import("#/types/sim").SimRuntimeState,
@@ -198,8 +201,9 @@ function logBroadcastCounters(sessionId: string) {
 	}
 
 	const { ohlcv, lob, trades, agents } = counters;
-	console.log(
-		`[SimRunner] ${sessionId} websocket events this tick: ohlcv=${ohlcv} lob=${lob} trades=${trades} agents=${agents}`,
+	log.info(
+		{ sessionId, ohlcv, lob, trades, agents },
+		"websocket events this tick",
 	);
 
 	broadcastCounters.set(sessionId, createBroadcastCounters());
@@ -305,8 +309,8 @@ async function createBootstrapMarketData(
 	marketData: Awaited<ReturnType<typeof loadBootstrapMarketData>> | null;
 }> {
 	if (!hasAlpacaEnv()) {
-		console.error(
-			"[SimRunner] Alpaca env vars missing (ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL); falling back to local seed prices.",
+		log.error(
+			"Alpaca env vars missing (ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL); falling back to local seed prices.",
 		);
 		return {
 			marketData: null,
@@ -324,9 +328,9 @@ async function createBootstrapMarketData(
 			),
 		};
 	} catch (error) {
-		console.error(
-			"[SimRunner] Alpaca bootstrap failed; falling back to local seed prices. Verify ALPACA_API_KEY and ALPACA_API_SECRET in .env.local.",
-			error,
+		log.error(
+			{ err: error },
+			"Alpaca bootstrap failed; falling back to local seed prices. Verify ALPACA_API_KEY and ALPACA_API_SECRET in .env.local.",
 		);
 		return {
 			marketData: null,
@@ -392,12 +396,20 @@ function toResearchNote(row: PersistedResearchNoteRow) {
 }
 
 function logRuntimeEvent(sessionId: string, message: string): void {
-	console.log(`[SimRunner] ${sessionId} ${message}`);
+	log.info({ sessionId }, message);
 }
 
 function logTickSummary(sessionId: string, summary: TickSummary): void {
-	console.log(
-		`[SimRunner] ${sessionId} tick=${summary.simTick} durationMs=${summary.durationMs} trades=${summary.tradeCount} orders=${summary.orderCount} running=${summary.isRunning}`,
+	log.info(
+		{
+			sessionId,
+			simTick: summary.simTick,
+			durationMs: summary.durationMs,
+			trades: summary.tradeCount,
+			orders: summary.orderCount,
+			running: summary.isRunning,
+		},
+		"tick completed",
 	);
 	logBroadcastCounters(sessionId);
 }
@@ -832,9 +844,13 @@ export async function runResearchCycle(
 			continue;
 		}
 
-		console.error(
-			`[Research] ${workers[index]?.id ?? "unknown"} failed at tick ${simTick}:`,
-			outcome.reason,
+		log.error(
+			{
+				err: outcome.reason,
+				workerId: workers[index]?.id ?? "unknown",
+				simTick,
+			},
+			"research cycle failed",
 		);
 	}
 }
@@ -886,7 +902,7 @@ async function processRuntimeCycle(
 					);
 					logTickSummary(sessionId, summary);
 				} catch (error) {
-					console.error(`Error during step for session ${sessionId}:`, error);
+					log.error({ err: error, sessionId }, "error during step");
 					break;
 				}
 			}
@@ -918,7 +934,7 @@ async function processRuntimeCycle(
 		);
 		logTickSummary(sessionId, summary);
 	} catch (error) {
-		console.error(`Error during tick for session ${sessionId}:`, error);
+		log.error({ err: error, sessionId }, "error during tick");
 	}
 
 	const elapsed = Date.now() - tickStartedAt;
@@ -939,7 +955,7 @@ async function main() {
 		: null;
 	const maxLiveSessions = getMaxLiveSessions();
 
-	console.log(`[SimRunner] worker started maxLiveSessions=${maxLiveSessions}`);
+	log.info({ maxLiveSessions }, "worker started");
 
 	while (true) {
 		const [runnableSessions, deletingSessions] = await Promise.all([
@@ -979,7 +995,10 @@ async function main() {
 				await hardDeleteSimulationSession(session.id);
 				logRuntimeEvent(session.id, "deleted");
 			} catch (error) {
-				console.error(`Failed to delete session ${session.id}:`, error);
+				log.error(
+					{ err: error, sessionId: session.id },
+					"failed to delete session",
+				);
 			}
 		}
 
@@ -994,7 +1013,10 @@ async function main() {
 				const runtime = await resumeSimulationRuntime(session);
 				runtimes.set(session.id, runtime);
 			} catch (error) {
-				console.error(`Failed to resume session ${session.id}:`, error);
+				log.error(
+					{ err: error, sessionId: session.id },
+					"failed to resume session",
+				);
 				broadcastSessionStatus(session.id, "failed");
 				await markSimulationSessionFailed(session.id);
 			}
@@ -1011,7 +1033,10 @@ async function main() {
 				const runtime = await bootstrapSimulationRuntime(session);
 				runtimes.set(session.id, runtime);
 			} catch (error) {
-				console.error(`Failed to bootstrap session ${session.id}:`, error);
+				log.error(
+					{ err: error, sessionId: session.id },
+					"failed to bootstrap session",
+				);
 				broadcastSessionStatus(session.id, "failed");
 				await markSimulationSessionFailed(session.id);
 			}
@@ -1036,7 +1061,7 @@ const isMainModule =
 
 if (isMainModule) {
 	main().catch((error) => {
-		console.error("Fatal error:", error);
+		log.fatal({ err: error }, "fatal error");
 		process.exit(1);
 	});
 }

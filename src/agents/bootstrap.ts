@@ -9,6 +9,7 @@ import {
 import { serializeAgentEntriesForDb } from "#/agents/persistence";
 import type { BootstrapMarketData } from "#/alpaca/live-feed";
 import { db } from "#/db/index";
+import { createLogger } from "#/lib/logger";
 import {
 	agents as agentsTable,
 	orderBookSnapshots as orderBookSnapshotsTable,
@@ -28,6 +29,8 @@ import type { TickSummary } from "#/types/sim";
 import { cloneResearchRequestContext } from "#/mastra/research-context";
 
 export type { ResearchAgentWorker } from "#/agents/factory";
+
+const log = createLogger("Bootstrap");
 
 const DEFAULT_SEED_PRICE = new Decimal(150);
 const DEFAULT_SEED_SPREAD = new Decimal("0.10");
@@ -823,8 +826,13 @@ export function restoreSimulation(
 			persistedOrder.tick,
 		);
 		if (replayedTrades.length > 0) {
-			console.warn(
-				`[Bootstrap] Replay for session ${input.sessionId} order ${order.id} produced ${replayedTrades.length} trades while rebuilding the live book.`,
+			log.warn(
+				{
+					sessionId: input.sessionId,
+					orderId: order.id,
+					tradeCount: replayedTrades.length,
+				},
+				"replay produced trades while rebuilding the live book",
 			);
 		}
 

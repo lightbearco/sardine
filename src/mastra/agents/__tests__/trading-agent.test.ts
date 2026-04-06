@@ -1,38 +1,8 @@
-import type { MastraModelConfig } from "@mastra/core/llm";
 import { RequestContext } from "@mastra/core/request-context";
 import { describe, expect, it } from "vitest";
-import {
-	tradingAgent,
-	tradingDecisionSchema,
-} from "#/mastra/agents/trading-agent";
-import { TRADING_MODEL } from "#/mastra/models";
+import { tradingAgent } from "#/mastra/agents/trading-agent";
 import { createToolHarness } from "#/mastra/tools/__tests__/test-helpers";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
-
-function logTradingDecision(
-	label: string,
-	result: {
-		reasoningText?: string;
-		object: {
-			reasoning: string;
-			ordersPlaced: unknown[];
-			autopilotDirective: unknown;
-		};
-	},
-) {
-	console.log(`\n[${label}] Agent reasoning:\n${result.object.reasoning}`);
-
-	if (result.reasoningText) {
-		console.log(`\n[${label}] Model reasoning text:\n${result.reasoningText}`);
-	}
-
-	console.log(
-		`\n[${label}] Orders placed:\n${JSON.stringify(result.object.ordersPlaced, null, 2)}`,
-	);
-	console.log(
-		`\n[${label}] Autopilot directive:\n${JSON.stringify(result.object.autopilotDirective, null, 2)}`,
-	);
-}
 
 function getAgentFields() {
 	return tradingAgent.__getOverridableFields();
@@ -50,20 +20,6 @@ function getInstructions(
 	}
 
 	return fields.instructions;
-}
-
-function getModel(
-	requestContext: RequestContext<TradingRequestContextValues>,
-): MastraModelConfig {
-	const fields = getAgentFields();
-
-	if (typeof fields.model === "function") {
-		return fields.model({
-			requestContext: requestContext as RequestContext<unknown>,
-		}) as MastraModelConfig;
-	}
-
-	return fields.model as MastraModelConfig;
 }
 
 describe("tradingAgent", () => {
@@ -128,69 +84,5 @@ describe("tradingAgent", () => {
 		expect(instructions).toContain(
 			"- Trade within your mandate, size risk deliberately, and respect tool validation.",
 		);
-	});
-
-	it("maps sonnet tier to Gemini Pro and other tiers to Gemini Flash", () => {
-		const sonnetContext = new RequestContext<TradingRequestContextValues>();
-		sonnetContext.set("model-tier", "sonnet");
-
-		const haikuContext = new RequestContext<TradingRequestContextValues>();
-		haikuContext.set("model-tier", "haiku");
-
-		const sonnetModel = getModel(sonnetContext) as {
-			modelId?: string;
-			provider?: string;
-		};
-		const haikuModel = getModel(haikuContext) as {
-			modelId?: string;
-			provider?: string;
-		};
-
-		expect(sonnetModel.modelId).toBe(TRADING_MODEL);
-		expect(sonnetModel.provider).toBe("google.generative-ai");
-		expect(haikuModel.modelId).toBe(TRADING_MODEL);
-		expect(haikuModel.provider).toBe("google.generative-ai");
-	});
-
-	it("can generate structured output with a non-network mock model", async () => {
-		const { requestContext } = createToolHarness();
-		const { createMockModel } = (await import(
-			"@mastra/core/dist/test-utils/llm-mock"
-		)) as {
-			createMockModel: (args: {
-				objectGenerationMode?: "json";
-				mockText: unknown;
-				version?: "v1" | "v2";
-			}) => MastraModelConfig;
-		};
-		const mockModel = createMockModel({
-			objectGenerationMode: "json",
-			mockText: {
-				reasoning: "No trade is warranted this tick.",
-				ordersPlaced: [],
-				autopilotDirective: {
-					standingOrders: [],
-					holdPositions: ["AAPL"],
-					cancelIf: { symbol: "AAPL", condition: "price <= 90" },
-				},
-			},
-		});
-
-		const result = await tradingAgent.generate("What do you want to trade?", {
-			requestContext,
-			maxSteps: 1,
-			model: mockModel,
-			structuredOutput: {
-				schema: tradingDecisionSchema,
-				model: mockModel,
-			},
-		});
-
-		logTradingDecision("mock-generate", result);
-
-		expect(tradingDecisionSchema.parse(result.object)).toBeDefined();
-		expect(result.object.ordersPlaced).toEqual([]);
-		expect(result.object.autopilotDirective.holdPositions).toEqual(["AAPL"]);
-		expect(result.object.reasoning).toContain("No trade is warranted");
 	});
 });

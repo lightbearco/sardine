@@ -7,6 +7,9 @@ import {
 	type AlpacaQuoteSnapshot,
 	type AlpacaTradeSnapshot,
 } from "#/alpaca/client";
+import { createLogger } from "#/lib/logger";
+
+const log = createLogger("Alpaca");
 
 const FALLBACK_SEED_PRICE = 150;
 const FALLBACK_SPREAD = 0.1;
@@ -144,8 +147,64 @@ export async function loadBootstrapMarketData(
 
 	if (!dataTypes.includes("quotes")) {
 		for (const [symbol, snapshot] of snapshots) {
-			if (snapshot?.dailyQuote) {
-				quotes.set(symbol, snapshot.dailyQuote);
+			const quote = snapshot?.dailyQuote;
+			const hasValidQuote =
+				quote !== null &&
+				quote !== undefined &&
+				(quote.midPrice !== null || quote.lastPrice !== null);
+
+			if (hasValidQuote) {
+				quotes.set(symbol, quote!);
+			} else {
+				log.warn(
+					{
+						symbol,
+						quote: JSON.stringify(quote, null, 2),
+						snapshotKeys: snapshot
+							? {
+									dailyQuote: snapshot.dailyQuote ? "present" : "null",
+									dailyTrade: snapshot.dailyTrade
+										? { price: snapshot.dailyTrade.price }
+										: "null",
+									dailyBar: snapshot.dailyBar
+										? { close: snapshot.dailyBar.close }
+										: "null",
+									prevDailyBar: snapshot.prevDailyBar
+										? { close: snapshot.prevDailyBar.close }
+										: "null",
+								}
+							: "null",
+					},
+					`${symbol} dailyQuote missing or invalid`,
+				);
+
+				const alpacaPrice =
+					snapshot?.dailyTrade?.price ??
+					snapshot?.dailyBar?.close ??
+					snapshot?.prevDailyBar?.close ??
+					null;
+				if (alpacaPrice !== null) {
+					log.info({ symbol, price: alpacaPrice }, "using fallback price");
+					const spread = FALLBACK_SPREAD;
+					const halfSpread = spread / 2;
+					quotes.set(symbol, {
+						symbol,
+						bidPrice: Number((alpacaPrice - halfSpread).toFixed(4)),
+						askPrice: Number((alpacaPrice + halfSpread).toFixed(4)),
+						midPrice: alpacaPrice,
+						lastPrice: alpacaPrice,
+						spread,
+						timestamp:
+							snapshot?.dailyBar?.timestamp ??
+							snapshot?.dailyTrade?.timestamp ??
+							null,
+					});
+				} else {
+					log.error(
+						{ symbol, fallbackSeedPrice: FALLBACK_SEED_PRICE },
+						"no price data found in snapshot; falling back to default seed price",
+					);
+				}
 			}
 		}
 	}

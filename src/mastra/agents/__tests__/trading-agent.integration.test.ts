@@ -241,6 +241,8 @@ describe("trading agent deterministic integration", () => {
 				markPrice: "101",
 				marketValue: "404",
 				unrealizedPnl: "24",
+				weightPct: "0.4",
+				realizedPnl: "36",
 			},
 		]);
 		expect(portfolio.openOrders).toEqual([]);
@@ -333,6 +335,8 @@ describe("trading agent deterministic integration", () => {
 				markPrice: "100",
 				marketValue: "600",
 				unrealizedPnl: "60",
+				weightPct: "0.6",
+				realizedPnl: "40",
 			},
 		]);
 	});

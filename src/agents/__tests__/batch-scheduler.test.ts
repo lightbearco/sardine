@@ -23,13 +23,13 @@ describe("partitionAgents", () => {
 		);
 
 		const tickZero = partitionAgents(registry, 0, SIM_DEFAULTS.groupCount);
-		expect(tickZero.active).toHaveLength(5);
-		expect(tickZero.inactive).toHaveLength(45);
+		expect(tickZero.active).toHaveLength(10);
+		expect(tickZero.inactive).toHaveLength(40);
 		expect(tickZero.active.every((agent) => agent.llmGroup === 0)).toBe(true);
 
 		const tickThree = partitionAgents(registry, 3, SIM_DEFAULTS.groupCount);
-		expect(tickThree.active).toHaveLength(5);
-		expect(tickThree.inactive).toHaveLength(45);
+		expect(tickThree.active).toHaveLength(10);
+		expect(tickThree.inactive).toHaveLength(40);
 		expect(tickThree.active.every((agent) => agent.llmGroup === 3)).toBe(true);
 	});
 
@@ -48,17 +48,21 @@ describe("partitionAgents", () => {
 			SIM_DEFAULTS.groupCount,
 		);
 
-		expect(partition.active.every((entry) => entry.state.status === "active")).toBe(
-			true,
-		);
-		expect(partition.inactive.every((entry) => entry.state.status === "active")).toBe(
-			true,
-		);
 		expect(
-			partition.active.some((entry) => entry.config.id === firstEntry.config.id),
+			partition.active.every((entry) => entry.state.status === "active"),
+		).toBe(true);
+		expect(
+			partition.inactive.every((entry) => entry.state.status === "active"),
+		).toBe(true);
+		expect(
+			partition.active.some(
+				(entry) => entry.config.id === firstEntry.config.id,
+			),
 		).toBe(false);
 		expect(
-			partition.inactive.some((entry) => entry.config.id === firstEntry.config.id),
+			partition.inactive.some(
+				(entry) => entry.config.id === firstEntry.config.id,
+			),
 		).toBe(false);
 	});
 });

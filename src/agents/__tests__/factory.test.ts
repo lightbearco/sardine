@@ -105,8 +105,8 @@ describe("spawnAgents", () => {
 
 		const goldman = registry.get("goldman-sachs");
 		expect(goldman).toBeDefined();
-		expect(goldman?.state.cash.eq(5_000_000)).toBe(true);
-		expect(goldman?.state.nav.eq(5_000_000)).toBe(true);
+		expect(goldman?.state.cash.eq(100_000_000)).toBe(true);
+		expect(goldman?.state.nav.eq(100_000_000)).toBe(true);
 		expect(goldman?.state.openOrders.size).toBe(0);
 		expect(goldman?.requestContext.get("agent-name")).toBe("Goldman Sachs");
 		expect(goldman?.requestContext.get("current-agenda")).toContain(

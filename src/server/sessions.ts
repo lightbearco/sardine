@@ -24,6 +24,7 @@ import {
 	deriveGroupCount,
 	type CreateSimulationSessionInput,
 } from "#/lib/simulation-session";
+import { createLogger } from "#/lib/logger";
 import type {
 	LOBSnapshot,
 	LOBSnapshotData,
@@ -44,6 +45,8 @@ import type {
 	TickSummaryData,
 } from "#/types/sim";
 import type { AutopilotDirective } from "#/types/agent";
+
+const log = createLogger("Sessions");
 
 export type DeleteSimulationSessionResult = {
 	status: "deleted" | "deleting";
@@ -267,9 +270,9 @@ async function deleteSessionObservability(sessionId: string): Promise<void> {
 			traceIds: [...traceIds],
 		});
 	} catch (error) {
-		console.warn(
-			`[Sessions] Failed to delete observability data for session ${sessionId}:`,
-			error instanceof Error ? error.message : error,
+		log.warn(
+			{ err: error, sessionId },
+			"failed to delete observability data for session",
 		);
 	}
 }

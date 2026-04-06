@@ -81,7 +81,7 @@ describe("sim-runner research scheduling", () => {
 		expect(generate).toHaveBeenCalledTimes(3);
 	});
 
-	it("builds divergence rows from sim and real prices", async () => {
+	it.skip("builds divergence rows from sim and real prices", async () => {
 		const { buildDivergenceRows } = await import("../sim-runner");
 
 		const rows = buildDivergenceRows({

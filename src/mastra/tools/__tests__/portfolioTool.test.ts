@@ -52,6 +52,8 @@ describe("portfolioTool", () => {
 				markPrice: "100",
 				marketValue: "1000",
 				unrealizedPnl: "100",
+				weightPct: "0.99",
+				realizedPnl: "0",
 			},
 		]);
 		expect(result.openOrders).toEqual([
@@ -84,10 +86,9 @@ describe("portfolioTool", () => {
 			},
 		});
 
-		const result = unwrapToolResult(await portfolioTool.execute?.(
-			{ symbol: "MSFT" },
-			{ requestContext },
-		));
+		const result = unwrapToolResult(
+			await portfolioTool.execute?.({ symbol: "MSFT" }, { requestContext }),
+		);
 
 		expect(result.positions).toHaveLength(1);
 		expect(result.positions[0]?.symbol).toBe("MSFT");
@@ -128,14 +129,18 @@ describe("portfolioTool", () => {
 			},
 		});
 
-		const lastPriceResult = unwrapToolResult(await portfolioTool.execute?.(
-			{},
-			{ requestContext: lastPriceHarness.requestContext },
-		));
-		const avgCostResult = unwrapToolResult(await portfolioTool.execute?.(
-			{},
-			{ requestContext: avgCostHarness.requestContext },
-		));
+		const lastPriceResult = unwrapToolResult(
+			await portfolioTool.execute?.(
+				{},
+				{ requestContext: lastPriceHarness.requestContext },
+			),
+		);
+		const avgCostResult = unwrapToolResult(
+			await portfolioTool.execute?.(
+				{},
+				{ requestContext: avgCostHarness.requestContext },
+			),
+		);
 
 		expect(lastPriceResult.positions[0]?.markPrice).toBe("100.05");
 		expect(avgCostResult.positions[0]).toEqual({
@@ -145,6 +150,8 @@ describe("portfolioTool", () => {
 			markPrice: "87",
 			marketValue: "-261",
 			unrealizedPnl: "0",
+			weightPct: "-0.26",
+			realizedPnl: "0",
 		});
 	});
 
@@ -190,14 +197,12 @@ describe("portfolioTool", () => {
 			],
 		});
 
-		const filtered = unwrapToolResult(await portfolioTool.execute?.(
-			{ symbol: "MSFT" },
-			{ requestContext },
-		));
-		const allOrders = unwrapToolResult(await portfolioTool.execute?.(
-			{},
-			{ requestContext },
-		));
+		const filtered = unwrapToolResult(
+			await portfolioTool.execute?.({ symbol: "MSFT" }, { requestContext }),
+		);
+		const allOrders = unwrapToolResult(
+			await portfolioTool.execute?.({}, { requestContext }),
+		);
 
 		expect(filtered.positions).toEqual([]);
 		expect(filtered.openOrders).toEqual([]);

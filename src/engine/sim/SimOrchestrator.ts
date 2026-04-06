@@ -13,6 +13,7 @@ import { requoteMarketMakers } from "#/agents/market-maker-liquidity";
 import { PortfolioManager } from "#/agents/PortfolioManager";
 import { serializeAgentEntryForDb } from "#/agents/persistence";
 import type { Database } from "#/db/index";
+import { createLogger } from "#/lib/logger";
 import {
 	agentEvents as agentEventsTable,
 	agents as agentsTable,
@@ -66,6 +67,7 @@ import type { SimClock } from "./SimClock";
 
 const DEFAULT_LLM_CONCURRENCY = 10;
 const DEFAULT_LLM_TIMEOUT_MS = 15_000;
+const log = createLogger("SimOrchestrator");
 
 type CommandRow = InferSelectModel<typeof commandsTable>;
 type TradingAgentStreamLike = {
@@ -326,8 +328,9 @@ export class SimOrchestrator {
 					}
 
 					if (!this.isSupportedSymbol(existingOrder.symbol)) {
-						console.warn(
-							`[SimOrchestrator] Removing cancel target ${cancelOrderId} for unsupported symbol ${existingOrder.symbol}`,
+						log.warn(
+							{ orderId: cancelOrderId, symbol: existingOrder.symbol },
+							"removing cancel target for unsupported symbol",
 						);
 						entry.state.openOrders.delete(cancelOrderId);
 						changedAgentIds.add(entry.config.id);
@@ -542,9 +545,14 @@ export class SimOrchestrator {
 
 			const failure = this.normalizeActiveAgentFailure(settled.reason);
 			const fallbackDirective = this.buildFallbackDirective(entry);
-			console.error(
-				`[LLM FAIL] Agent "${entry.config.name}" (${entry.config.id}) tick ${simTick}:`,
-				failure.message,
+			log.error(
+				{
+					agentName: entry.config.name,
+					agentId: entry.config.id,
+					simTick,
+					reason: failure.message,
+				},
+				"LLM generation failed for agent",
 			);
 			entry.state.lastAutopilotDirective = fallbackDirective;
 			entry.state.lastLlmTick = simTick;
@@ -700,7 +708,7 @@ export class SimOrchestrator {
 			return await this.tradingAgent.stream(prompt, {
 				resourceId: this.sessionId,
 				requestContext,
-				maxSteps: 6,
+				maxSteps: 15,
 				abortSignal: controller.signal,
 				structuredOutput: {
 					schema: tradingDecisionSchema,
@@ -886,8 +894,9 @@ export class SimOrchestrator {
 				}
 
 				removedUnsupported = true;
-				console.warn(
-					`[SimOrchestrator] Dropping stale open order ${order.id} for unsupported symbol ${order.symbol}`,
+				log.warn(
+					{ orderId: order.id, symbol: order.symbol },
+					"dropping stale open order for unsupported symbol",
 				);
 			}
 
@@ -915,9 +924,9 @@ export class SimOrchestrator {
 			if (
 				this.hasConflictingOrderIdentity(existingOrder.order, stagedOrder.order)
 			) {
-				console.error(
-					`[SimOrchestrator] Conflicting replay for order ${stagedOrder.order.id}; discarding duplicate stage`,
+				log.error(
 					{
+						orderId: stagedOrder.order.id,
 						existing: {
 							agentId: existingOrder.order.agentId,
 							symbol: existingOrder.order.symbol,
@@ -931,12 +940,14 @@ export class SimOrchestrator {
 							type: stagedOrder.order.type,
 						},
 					},
+					"conflicting replay for order; discarding duplicate stage",
 				);
 				continue;
 			}
 
-			console.warn(
-				`[SimOrchestrator] Duplicate staged order ${stagedOrder.order.id}; keeping latest version`,
+			log.warn(
+				{ orderId: stagedOrder.order.id },
+				"duplicate staged order; keeping latest version",
 			);
 			ordersById.set(stagedOrder.order.id, stagedOrder);
 		}
@@ -961,8 +972,9 @@ export class SimOrchestrator {
 			}
 
 			const rejectionReason = `[system] unsupported_symbol:${stagedOrder.order.symbol}`;
-			console.warn(
-				`[SimOrchestrator] Rejecting order ${stagedOrder.order.id} for unsupported symbol ${stagedOrder.order.symbol}`,
+			log.warn(
+				{ orderId: stagedOrder.order.id, symbol: stagedOrder.order.symbol },
+				"rejecting order for unsupported symbol",
 			);
 			rejectedOrders.push({
 				...stagedOrder,
@@ -1003,8 +1015,9 @@ export class SimOrchestrator {
 				continue;
 			}
 
-			console.warn(
-				`[SimOrchestrator] Ignoring replayed open order ${stagedOrder.order.id}; persisting current state without re-matching`,
+			log.warn(
+				{ orderId: stagedOrder.order.id },
+				"ignoring replayed open order; persisting current state without re-matching",
 			);
 			replayedOrders.push({
 				...stagedOrder,
@@ -1110,13 +1123,74 @@ export class SimOrchestrator {
 						)
 						.join("\n");
 
-		return [
+		const capital = entry.config.capital;
+		const cash = entry.state.cash;
+		const nav = entry.state.nav;
+		const totalPnl = nav.minus(capital);
+		const pnlPct =
+			capital > 0
+				? totalPnl.div(capital).times(100).toDecimalPlaces(2).toString()
+				: "0";
+
+		let portfolioSummary = `Cash: $${cash.toDecimalPlaces(2).toString()} | NAV: $${nav.toDecimalPlaces(2).toString()} | P&L: $${totalPnl.toDecimalPlaces(2).toString()} (${pnlPct}%)`;
+
+		const positions = Array.from(entry.state.positions.entries());
+		if (positions.length > 0) {
+			const refPrices = this.matchingEngine.getReferencePrices();
+			const positionLines = positions.map(([symbol, pos]) => {
+				const refPrice = refPrices.get(symbol);
+				const markPrice = refPrice ?? pos.avgCost;
+				const marketValue = markPrice.times(pos.qty);
+				const weightPct = nav.gt(0)
+					? marketValue.div(nav).times(100).toDecimalPlaces(2).toString()
+					: "0";
+				const unrealizedPnl = markPrice.minus(pos.avgCost).times(pos.qty);
+				const realizedPnl =
+					entry.state.realizedPnl.get(symbol) ?? new Decimal(0);
+				return `${symbol}: ${pos.qty} shares @ $${pos.avgCost.toDecimalPlaces(2)} | Mark $${markPrice.toDecimalPlaces(2)} | MV $${marketValue.toDecimalPlaces(2)} (${weightPct}%) | Unrealized $${unrealizedPnl.toDecimalPlaces(2)} | Realized $${realizedPnl.toDecimalPlaces(2)}`;
+			});
+			portfolioSummary += `\n\nPositions (${positions.length}):\n${positionLines.join("\n")}`;
+		} else {
+			portfolioSummary += "\n\nNo open positions.";
+		}
+
+		const openOrderCount = entry.state.openOrders.size;
+		if (openOrderCount > 0) {
+			portfolioSummary += `\n\nOpen orders: ${openOrderCount}`;
+		}
+
+		const fills = entry.state.pendingFills;
+		let fillSummary = "";
+		if (fills.length > 0) {
+			const fillLines = fills.map((fill) => {
+				const side = fill.buyerAgentId === entry.config.id ? "BUY" : "SELL";
+				return `- ${side} ${fill.qty} ${fill.symbol} @ $${fill.price.toDecimalPlaces(2)} (tick ${fill.tick})`;
+			});
+			fillSummary = `Fills since your last turn:\n${fillLines.join("\n")}`;
+		}
+
+		const parts = [
 			`Simulation tick: ${simTick}`,
 			`Simulated market time: ${simulatedTime.toISOString()}`,
+			"Your portfolio:",
+			portfolioSummary,
+		];
+
+		if (fillSummary) {
+			parts.push(fillSummary);
+		}
+
+		parts.push(
 			"Recent released research:",
 			noteSummary,
-			"Decide whether to trade this tick. Use tools when you need market data, portfolio context, or to stage an order.",
-		].join("\n\n");
+			"Decide whether to trade this tick. Use tools when you need market data, additional portfolio context, or to stage an order.",
+		);
+
+		const prompt = parts.join("\n\n");
+
+		entry.state.pendingFills = [];
+
+		return prompt;
 	}
 
 	private getReleasedNotesForPrompt(

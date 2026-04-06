@@ -70,10 +70,13 @@ export function CandlestickChart({
 	const { session, simState } = useSessionDashboard();
 	const { bars, isConnected } = useMarketData(symbol);
 	const [showVolume, setShowVolume] = useState(showVolumeProp);
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const chartRef = useRef<IChartApi | null>(null);
+	const candleContainerRef = useRef<HTMLDivElement | null>(null);
+	const volumeContainerRef = useRef<HTMLDivElement | null>(null);
+	const candleChartRef = useRef<IChartApi | null>(null);
+	const volumeChartRef = useRef<IChartApi | null>(null);
 	const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
 	const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+	const syncingRef = useRef(false);
 	const colors = useMemo(
 		() => ({
 			...TERMINAL_CHART_COLORS,
@@ -88,23 +91,16 @@ export function CandlestickChart({
 	const prevLengthRef = useRef(0);
 
 	const reference = useMemo(() => {
-		if (!simState) {
-			return null;
-		}
+		if (!simState) return null;
 
 		const simulatedTime =
 			simState.simulatedTime instanceof Date
 				? simState.simulatedTime
 				: new Date(simState.simulatedTime);
 		const timeMs = simulatedTime.getTime();
-		if (!Number.isFinite(timeMs)) {
-			return null;
-		}
+		if (!Number.isFinite(timeMs)) return null;
 
-		return {
-			tick: simState.simTick,
-			timeMs,
-		};
+		return { tick: simState.simTick, timeMs };
 	}, [simState]);
 
 	const tickDurationMs = useMemo(
@@ -113,9 +109,7 @@ export function CandlestickChart({
 	);
 
 	const convertTickToTime = useMemo(() => {
-		if (!reference) {
-			return (tick: number) => tick as Time;
-		}
+		if (!reference) return (tick: number) => tick as Time;
 
 		return (tick: number) => {
 			const offsetTicks = reference.tick - tick;
@@ -128,12 +122,48 @@ export function CandlestickChart({
 
 	const prevConvertTickToTimeRef = useRef(convertTickToTime);
 
-	useEffect(() => {
-		if (!containerRef.current) {
-			return;
-		}
+	const initialShowVolumeRef = useRef(showVolumeProp);
 
-		const chart = createChart(containerRef.current, {
+	useEffect(() => {
+		if (!candleContainerRef.current || !volumeContainerRef.current) return;
+
+		const candleChart = createChart(candleContainerRef.current, {
+			autoSize: true,
+			layout: {
+				background: {
+					type: ColorType.Solid,
+					color: TERMINAL_CHART_COLORS.background,
+				},
+				textColor: TERMINAL_CHART_COLORS.text,
+			},
+			grid: {
+				vertLines: { color: TERMINAL_CHART_COLORS.grid },
+				horzLines: { color: TERMINAL_CHART_COLORS.grid },
+			},
+			rightPriceScale: {
+				borderColor: TERMINAL_CHART_COLORS.border,
+			},
+			timeScale: {
+				borderColor: TERMINAL_CHART_COLORS.border,
+				timeVisible: true,
+				secondsVisible: false,
+				visible: !initialShowVolumeRef.current,
+			},
+			crosshair: {
+				vertLine: { color: TERMINAL_CHART_COLORS.border },
+				horzLine: { color: TERMINAL_CHART_COLORS.border },
+			},
+		});
+
+		const candleSeries = candleChart.addCandlestickSeries({
+			upColor: colorsRef.current.green,
+			downColor: colorsRef.current.red,
+			borderVisible: false,
+			wickUpColor: colorsRef.current.green,
+			wickDownColor: colorsRef.current.red,
+		});
+
+		const volumeChart = createChart(volumeContainerRef.current, {
 			autoSize: true,
 			layout: {
 				background: {
@@ -160,47 +190,47 @@ export function CandlestickChart({
 			},
 		});
 
-		const candleSeries = chart.addCandlestickSeries({
-			upColor: colorsRef.current.green,
-			downColor: colorsRef.current.red,
-			borderVisible: false,
-			wickUpColor: colorsRef.current.green,
-			wickDownColor: colorsRef.current.red,
+		const volumeSeries = volumeChart.addHistogramSeries({
+			priceFormat: { type: "volume" },
 		});
 
-		let volumeSeries: ISeriesApi<"Histogram"> | null = null;
-		if (showVolume) {
-			volumeSeries = chart.addHistogramSeries({
-				priceScaleId: "",
-				priceFormat: { type: "volume" },
-			});
-			volumeSeries.priceScale().applyOptions({
-				scaleMargins: {
-					top: 0.8,
-					bottom: 0,
-				},
-			});
-		}
+		candleChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+			if (syncingRef.current || !range) return;
+			syncingRef.current = true;
+			volumeChart.timeScale().setVisibleLogicalRange(range);
+			syncingRef.current = false;
+		});
 
-		chartRef.current = chart;
+		volumeChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+			if (syncingRef.current || !range) return;
+			syncingRef.current = true;
+			candleChart.timeScale().setVisibleLogicalRange(range);
+			syncingRef.current = false;
+		});
+
+		candleChartRef.current = candleChart;
+		volumeChartRef.current = volumeChart;
 		candleSeriesRef.current = candleSeries;
 		volumeSeriesRef.current = volumeSeries;
 
-		const observer = new ResizeObserver((entries) => {
-			const entry = entries[0];
-			if (entry) {
-				chart.resize(entry.contentRect.width, entry.contentRect.height);
-			}
-		});
-		observer.observe(containerRef.current);
-
 		return () => {
-			observer.disconnect();
-			chart.remove();
-			chartRef.current = null;
+			candleChart.remove();
+			volumeChart.remove();
+			candleChartRef.current = null;
+			volumeChartRef.current = null;
 			candleSeriesRef.current = null;
 			volumeSeriesRef.current = null;
 		};
+	}, []);
+
+	useEffect(() => {
+		const candleChart = candleChartRef.current;
+		if (!candleChart) return;
+		candleChart.applyOptions({
+			timeScale: {
+				visible: !showVolume,
+			},
+		});
 	}, [showVolume]);
 
 	useEffect(() => {
@@ -217,10 +247,9 @@ export function CandlestickChart({
 	useEffect(() => {
 		const candleSeries = candleSeriesRef.current;
 		const volumeSeries = volumeSeriesRef.current;
-		const chart = chartRef.current;
-		if (!candleSeries || !chart) {
-			return;
-		}
+		const candleChart = candleChartRef.current;
+		const volumeChart = volumeChartRef.current;
+		if (!candleSeries || !candleChart) return;
 
 		const timeConverterChanged =
 			prevConvertTickToTimeRef.current !== convertTickToTime;
@@ -233,7 +262,8 @@ export function CandlestickChart({
 			);
 			prevSymbolRef.current = symbol;
 			prevLengthRef.current = bars.length;
-			chart.timeScale().fitContent();
+			candleChart.timeScale().fitContent();
+			volumeChart?.timeScale().fitContent();
 			return;
 		}
 
@@ -254,7 +284,8 @@ export function CandlestickChart({
 				toVolumeData(bars, colorsRef.current, convertTickToTime),
 			);
 			if (timeConverterChanged || prevLengthRef.current === 0) {
-				chart.timeScale().fitContent();
+				candleChart.timeScale().fitContent();
+				volumeChart?.timeScale().fitContent();
 			}
 		} else {
 			const lastBar = bars[bars.length - 1];
@@ -357,7 +388,25 @@ export function CandlestickChart({
 				</button>
 				<MaximizeButton panelId="chart" />
 			</div>
-			<div ref={containerRef} className="min-h-0 flex-1" />
+			<div className="flex min-h-0 flex-1 flex-col">
+				<div
+					ref={candleContainerRef}
+					className="min-h-0"
+					style={{ flex: showVolume ? "1 1 0%" : "1 1 100%" }}
+				/>
+				<div
+					className="shrink-0"
+					style={{
+						background: TERMINAL_CHART_COLORS.border,
+						height: showVolume ? 1 : 0,
+					}}
+				/>
+				<div
+					ref={volumeContainerRef}
+					className="min-h-0 overflow-hidden"
+					style={{ flex: showVolume ? "0 0 25%" : "0 0 0px" }}
+				/>
+			</div>
 		</section>
 	);
 }

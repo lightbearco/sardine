@@ -1,14 +1,20 @@
 import { WebSocketServer, WebSocket } from "ws";
+import { createLogger } from "#/lib/logger";
 import { hasSimulationSession } from "#/server/sessions";
 import { parseWsChannel } from "#/types/ws";
 import { connectionManager } from "./ConnectionManager";
 
-export async function validateWsSubscriptionChannel(channel: string): Promise<{
-	ok: true;
-} | {
-	ok: false;
-	reason: "invalid_channel" | "unknown_session";
-}> {
+const log = createLogger("WsServer");
+
+export async function validateWsSubscriptionChannel(channel: string): Promise<
+	| {
+			ok: true;
+	  }
+	| {
+			ok: false;
+			reason: "invalid_channel" | "unknown_session";
+	  }
+> {
 	const parsed = parseWsChannel(channel);
 	if (!parsed) {
 		return { ok: false, reason: "invalid_channel" };
@@ -22,47 +28,57 @@ export async function validateWsSubscriptionChannel(channel: string): Promise<{
 	return exists ? { ok: true } : { ok: false, reason: "unknown_session" };
 }
 
-export function startSimWebSocketServer(port: number = Number(process.env.WS_PORT) || 3001) {
-  const verboseChannelLogs = process.env.SIM_WS_VERBOSE_LOGS === "1";
-  const wss = new WebSocketServer({ port });
+export function startSimWebSocketServer(
+	port: number = Number(process.env.WS_PORT) || 3001,
+) {
+	const verboseChannelLogs = process.env.SIM_WS_VERBOSE_LOGS === "1";
+	const wss = new WebSocketServer({ port });
 
-  wss.on("connection", (ws: WebSocket) => {
-    console.log("WebSocket client connected");
+	wss.on("connection", (ws: WebSocket) => {
+		log.info("WebSocket client connected");
 
-    ws.on("message", async (msg) => {
-      try {
-        const messageStr = msg.toString();
-        const parsed = JSON.parse(messageStr);
-        
-        if (parsed.type === "subscribe" && typeof parsed.channel === "string") {
-          const validation = await validateWsSubscriptionChannel(parsed.channel);
-          if (!validation.ok) {
-            if (verboseChannelLogs) {
-              console.warn(`Rejected channel subscription: ${parsed.channel} (${validation.reason})`);
-            }
-            return;
-          }
-          connectionManager.subscribe(ws, parsed.channel);
-          if (verboseChannelLogs) {
-            console.log(`Subscribed to channel: ${parsed.channel}`);
-          }
-        } else if (parsed.type === "unsubscribe" && typeof parsed.channel === "string") {
-          connectionManager.unsubscribe(ws, parsed.channel);
-          if (verboseChannelLogs) {
-            console.log(`Unsubscribed from channel: ${parsed.channel}`);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to parse websocket message:", err);
-      }
-    });
+		ws.on("message", async (msg) => {
+			try {
+				const messageStr = msg.toString();
+				const parsed = JSON.parse(messageStr);
 
-    ws.on("close", () => {
-      connectionManager.removeConnection(ws);
-      console.log("WebSocket client disconnected");
-    });
-  });
+				if (parsed.type === "subscribe" && typeof parsed.channel === "string") {
+					const validation = await validateWsSubscriptionChannel(
+						parsed.channel,
+					);
+					if (!validation.ok) {
+						if (verboseChannelLogs) {
+							log.warn(
+								{ channel: parsed.channel, reason: validation.reason },
+								"rejected channel subscription",
+							);
+						}
+						return;
+					}
+					connectionManager.subscribe(ws, parsed.channel);
+					if (verboseChannelLogs) {
+						log.info({ channel: parsed.channel }, "subscribed to channel");
+					}
+				} else if (
+					parsed.type === "unsubscribe" &&
+					typeof parsed.channel === "string"
+				) {
+					connectionManager.unsubscribe(ws, parsed.channel);
+					if (verboseChannelLogs) {
+						log.info({ channel: parsed.channel }, "unsubscribed from channel");
+					}
+				}
+			} catch (err) {
+				log.error({ err }, "failed to parse websocket message");
+			}
+		});
 
-  console.log(`SimWebSocketServer running on port ${port}`);
-  return wss;
+		ws.on("close", () => {
+			connectionManager.removeConnection(ws);
+			log.info("WebSocket client disconnected");
+		});
+	});
+
+	log.info({ port }, "SimWebSocketServer running");
+	return wss;
 }

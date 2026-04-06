@@ -4,6 +4,9 @@ import {
 	hasAlpacaEnv,
 	type AlpacaClient,
 } from "#/alpaca/client";
+import { createLogger } from "#/lib/logger";
+
+const log = createLogger("Alpaca");
 
 export const alpacaOrderSignalSchema = z
 	.object({
@@ -73,8 +76,16 @@ export async function submitSimSignalToAlpaca(
 		clientOrderId: buildClientOrderId(parsed),
 	});
 
-	console.log(
-		`[Alpaca] Submitted ${parsed.type} ${parsed.side} ${parsed.qty} ${parsed.symbol}: ${result.id} (${result.status})`,
+	log.info(
+		{
+			type: parsed.type,
+			side: parsed.side,
+			qty: parsed.qty,
+			symbol: parsed.symbol,
+			orderId: result.id,
+			status: result.status,
+		},
+		"submitted paper order",
 	);
 
 	return {

@@ -293,7 +293,7 @@ describe("PortfolioManager", () => {
 		expect(registry.get("seller")?.state.positions.has("AAPL")).toBe(false);
 	});
 
-	it("throws for unknown agents and missing prices", () => {
+	it("silently skips unknown agents and handles missing prices", () => {
 		const buyer = makeState("buyer");
 		const seller = makeState("seller", {
 			positions: new Map([
@@ -309,17 +309,17 @@ describe("PortfolioManager", () => {
 		const registry = makeRegistry(buyer, seller);
 		const manager = new PortfolioManager();
 
-		expect(() =>
-			manager.reconcile(
-				[
-					makeTrade({
-						buyerAgentId: "missing",
-					}),
-				],
-				registry,
-				new Map([["AAPL", new Decimal("10")]]),
-			),
-		).toThrow("Unknown buyer agent ID: missing");
+		manager.reconcile(
+			[
+				makeTrade({
+					buyerAgentId: "missing",
+				}),
+			],
+			registry,
+			new Map([["AAPL", new Decimal("10")]]),
+		);
+
+		expect(buyer.cash.eq(1000)).toBe(true);
 
 		expect(() => manager.reconcile([makeTrade()], registry, new Map())).toThrow(
 			"Missing latest price for symbol: AAPL",

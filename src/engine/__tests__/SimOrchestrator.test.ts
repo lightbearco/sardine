@@ -674,16 +674,11 @@ describe("SimOrchestrator", () => {
 		});
 
 		const tradingAgent = createTradingAgentDouble({
-			"active-agent": async () => ({
-				object: {
-					reasoning: "timeout",
-					ordersPlaced: [],
-					autopilotDirective: {
-						standingOrders: [],
-						holdPositions: [],
-					},
-				},
-			}),
+			"active-agent": async () => {
+				throw new Error(
+					"Structured output validation failed: invalid_type at reasoning",
+				);
+			},
 		});
 
 		const orchestrator = new SimOrchestrator(

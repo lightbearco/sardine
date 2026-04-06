@@ -1,15 +1,33 @@
 import { Mastra } from "@mastra/core/mastra";
-import { PinoLogger } from "@mastra/loggers";
+import { MastraLogger } from "@mastra/core/logger";
 import {
 	CloudExporter,
 	DefaultExporter,
 	Observability,
 	SensitiveDataFilter,
 } from "@mastra/observability";
+import { createLogger } from "#/lib/logger";
 import { researchAgent } from "#/mastra/agents/research-agent";
 import { tradingAgent } from "#/mastra/agents/trading-agent";
 import { pgVector } from "#/mastra/stores/pgvector";
 import { postgresStore } from "./stores/postgres";
+
+const pinoLog = createLogger("Mastra");
+
+class MastraPinoLogger extends MastraLogger {
+	debug(message: string, ...args: any[]): void {
+		pinoLog.debug({ mastra: args }, message);
+	}
+	info(message: string, ...args: any[]): void {
+		pinoLog.info({ mastra: args }, message);
+	}
+	warn(message: string, ...args: any[]): void {
+		pinoLog.warn({ mastra: args }, message);
+	}
+	error(message: string, ...args: any[]): void {
+		pinoLog.error({ mastra: args }, message);
+	}
+}
 
 export const mastra = new Mastra({
 	agents: { tradingAgent, researchAgent },
@@ -17,10 +35,7 @@ export const mastra = new Mastra({
 	vectors: {
 		pgVector,
 	},
-	logger: new PinoLogger({
-		name: "Mastra",
-		level: "info",
-	}),
+	logger: new MastraPinoLogger({ name: "Mastra", level: "info" }),
 	observability: new Observability({
 		configs: {
 			default: {

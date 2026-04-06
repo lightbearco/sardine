@@ -31,6 +31,7 @@ function createSelectQuery(result: unknown[]) {
 vi.mock("#/db/index", () => ({
 	db: {
 		select: vi.fn(() => createSelectQuery(dequeueSelectResult())),
+		execute: vi.fn(() => Promise.resolve({ rows: dequeueSelectResult() })),
 	},
 }));
 
@@ -117,8 +118,7 @@ describe("getSessionDashboardHydration", () => {
 				updatedAt: new Date(),
 			},
 		]);
-		queueSelectResult([
-		]);
+		queueSelectResult([]);
 		queueSelectResult([
 			{
 				id: "agent-1",
@@ -207,6 +207,7 @@ describe("getSessionDashboardHydration", () => {
 				createdAt: new Date(),
 			},
 		]);
+		queueSelectResult([{ symbol: "NVDA", divergencePct: 1.5 }]);
 		queueSelectResult([
 			{
 				id: "sim_123",
@@ -278,10 +279,8 @@ describe("getSessionDashboardHydration", () => {
 			},
 		]);
 
-		const {
-			getSessionDashboardHydration,
-			getSessionSymbolHydration,
-		} = await import("../sessions");
+		const { getSessionDashboardHydration, getSessionSymbolHydration } =
+			await import("../sessions");
 		const hydration = await getSessionDashboardHydration({
 			sessionId: "sim_123",
 		});

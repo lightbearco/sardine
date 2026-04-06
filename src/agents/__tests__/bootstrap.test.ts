@@ -233,6 +233,7 @@ describe("bootstrapSimulation", () => {
 								avgCost: 149.8,
 							},
 						},
+						realizedPnl: { AAPL: 12.5 },
 						lastAutopilotDirective: {
 							standingOrders: [],
 							holdPositions: ["AAPL"],
