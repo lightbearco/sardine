@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 import { nanoid } from "nanoid";
 import type { AgentRegistry, AgentRegistryEntry } from "#/agents/AgentRegistry";
 import type { MatchingEngine } from "#/engine/lob/MatchingEngine";
-import { SIM_DEFAULTS } from "#/lib/constants";
+import { DEV_TICKERS, SIM_DEFAULTS } from "#/lib/constants";
 import type { Order } from "#/types/market";
 import type { StagedOrderResult } from "#/types/sim";
 
@@ -37,7 +37,11 @@ export function requoteMarketMakers(
 		if (!isMarketMakerLike(entry)) continue;
 		if (entry.state.status !== "active") continue;
 
-		const symbols = entry.config.sectors;
+		const sectorSet = new Set(entry.config.sectors);
+		const symbols = matchingEngine.getSymbols().filter((sym) => {
+			const sector = DEV_TICKERS.find((t) => t.symbol === sym)?.sector;
+			return sector != null && sectorSet.has(sector);
+		});
 		if (symbols.length === 0) continue;
 
 		for (const symbol of symbols) {

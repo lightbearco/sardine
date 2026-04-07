@@ -23,7 +23,7 @@ describe("bootstrapSimulation", () => {
 		insertCalls.length = 0;
 	});
 
-	it("uses Alpaca market data to seed books, positions, and historical bars", async () => {
+	it("uses Alpaca market data to seed books, positions, and a synthetic seed bar", async () => {
 		const { bootstrapSimulation } = await import("#/agents/bootstrap");
 		const result = await bootstrapSimulation({
 			sessionId: "sim_test",
@@ -87,7 +87,7 @@ describe("bootstrapSimulation", () => {
 			},
 		});
 
-		expect(result.initialTick).toBe(60);
+		expect(result.initialTick).toBe(0);
 		expect(
 			result.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber(),
 		).toBe(100);
@@ -110,10 +110,35 @@ describe("bootstrapSimulation", () => {
 					(row: any) =>
 						row.sessionId === "sim_test" &&
 						row.symbol === "AAPL" &&
-						row.tick === 60,
+						row.tick === 0,
 				),
 		);
 		expect(tickInsert).toBeDefined();
+		expect(
+			insertCalls.some(
+				(call) =>
+					Array.isArray(call.values) &&
+					call.values.some(
+						(row: any) =>
+							row.sessionId === "sim_test" &&
+							row.symbol === "MSFT" &&
+							row.tick === 0,
+					),
+			),
+		).toBe(true);
+		expect(
+			insertCalls.some(
+				(call) =>
+					Array.isArray(call.values) &&
+					call.values.some(
+						(row: any) =>
+							row.sessionId === "sim_test" &&
+							row.symbol === "MSFT" &&
+							"bids" in row &&
+							"asks" in row,
+					),
+			),
+		).toBe(true);
 	});
 
 	it("falls back to local seed prices when Alpaca data is absent", async () => {
@@ -154,7 +179,7 @@ describe("bootstrapSimulation", () => {
 		);
 		const bootstrap = await bootstrapSimulation({
 			sessionId: "sim_restore",
-			symbols: ["AAPL"],
+			symbols: ["AAPL", "MSFT"],
 			seed: 42,
 			agentCount: 2,
 			groupCount: 2,
@@ -175,7 +200,7 @@ describe("bootstrapSimulation", () => {
 		const restoredAgent = bootstrap.agentRegistry.getAll()[0];
 		const resumed = restoreSimulation({
 			sessionId: "sim_restore",
-			symbols: ["AAPL"],
+			symbols: ["AAPL", "MSFT"],
 			seed: 42,
 			agentCount: 2,
 			groupCount: 2,
@@ -238,6 +263,7 @@ describe("bootstrapSimulation", () => {
 							standingOrders: [],
 							holdPositions: ["AAPL"],
 						},
+						lastLlmTick: 10,
 						llmGroup: restoredAgent.config.llmGroup,
 					},
 				],
@@ -267,6 +293,15 @@ describe("bootstrapSimulation", () => {
 						quantity: 10,
 						filledQuantity: 0,
 						llmReasoning: null,
+					},
+				],
+				snapshots: [
+					{
+						symbol: "AAPL",
+						tick: 12,
+						bids: [{ price: 149.9, qty: 4, orderCount: 1 }],
+						asks: [{ price: 150.3, qty: 10, orderCount: 1 }],
+						lastPrice: 150.12,
 					},
 				],
 				researchNotes: [
@@ -301,6 +336,21 @@ describe("bootstrapSimulation", () => {
 		expect(
 			resumed.matchingEngine.getSnapshot("AAPL").bids[0]?.price.toNumber(),
 		).toBe(149.9);
+		expect(
+			resumed.matchingEngine.getSnapshot("AAPL").asks[0]?.price.toNumber(),
+		).toBe(150.3);
+		expect(resumed.matchingEngine.getSnapshot("MSFT").lastPrice?.toNumber()).toBe(
+			150,
+		);
+		expect(resumed.matchingEngine.getSnapshot("MSFT").bids[0]?.price.toNumber()).toBe(
+			149.95,
+		);
+		expect(resumed.matchingEngine.getSnapshot("MSFT").asks[0]?.price.toNumber()).toBe(
+			150.05,
+		);
+		expect(
+			restoredEntry?.state.researchInbox.get("note-1")?.headline,
+		).toBe("Desk note");
 		expect(resumed.runtimeState.currentTick).toBe(12);
 		expect(resumed.runtimeState.isRunning).toBe(false);
 		expect(resumed.runtimeState.speedMultiplier).toBe(2);

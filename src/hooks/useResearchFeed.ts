@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { ResearchNote } from "#/types/research";
 import { researchNotes as researchNotesTable } from "#/db/schema";
+import { mergeResearchFeedNotes } from "./useSessionDashboard";
 import { useSessionDashboardLiveState } from "./useSessionDashboard";
 
 type ResearchNoteRow = typeof researchNotesTable.$inferSelect;
@@ -21,14 +22,7 @@ export function mapResearchNoteRow(row: ResearchNoteRow): ResearchNote {
 	};
 }
 
-export function mergeResearchFeedNotes(
-	previous: ResearchNote[],
-	incoming: ResearchNote,
-	maxNotes: number,
-): ResearchNote[] {
-	const deduped = previous.filter((existing) => existing.id !== incoming.id);
-	return [incoming, ...deduped].slice(0, maxNotes);
-}
+export { mergeResearchFeedNotes };
 
 export function useResearchFeed(maxNotes: number = 25) {
 	const { isConnected, researchNotes } = useSessionDashboardLiveState();

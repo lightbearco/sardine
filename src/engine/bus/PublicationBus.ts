@@ -1,6 +1,6 @@
 import type { ResearchNote } from "#/types/research";
 
-const TIER_DELAYS = { tier1: 0, tier2: 5, tier3: 20 } as const;
+export const TIER_DELAYS = { tier1: 0, tier2: 5, tier3: 20 } as const;
 
 type TierKey = keyof typeof TIER_DELAYS;
 

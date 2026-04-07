@@ -99,6 +99,7 @@ export interface SimulationSessionSummary {
 export interface SessionWatchlistEntry {
 	lastBar: OHLCVBarData | null;
 	snapshot: LOBSnapshotData | null;
+	divergencePct?: number | null;
 }
 
 export interface SessionDashboardHydration {
@@ -276,8 +277,10 @@ export interface AgentRunStartedEvent extends AgentEventBase {
 	type: "run_started";
 }
 
-export interface AgentThinkingDeltaEvent extends AgentEventBase {
-	type: "thinking_delta";
+export interface AgentThinkingDelta {
+	agentId: string;
+	agentName: string;
+	tick: number;
 	delta: string;
 	transcript: string;
 }
@@ -306,7 +309,6 @@ export interface AgentFailedEvent extends AgentEventBase {
 
 export type AgentEvent =
 	| AgentRunStartedEvent
-	| AgentThinkingDeltaEvent
 	| AgentDecisionEvent
 	| AgentSignalEvent
 	| AgentFailedEvent;

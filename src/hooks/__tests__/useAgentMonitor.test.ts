@@ -30,16 +30,6 @@ const runStartedEvent: AgentEvent = {
 	tick: 20,
 };
 
-const thinkingEvent: AgentEvent = {
-	eventId: "event-2",
-	type: "thinking_delta",
-	agentId: "agent-1",
-	agentName: "Bridgewater",
-	tick: 20,
-	delta: "Watching yields.",
-	transcript: "Watching yields.",
-};
-
 const decisionEvent: AgentEvent = {
 	eventId: "event-3",
 	type: "decision",
@@ -68,7 +58,6 @@ describe("useAgentMonitor helpers", () => {
 	it("rebuilds live agent state from hydrated history", () => {
 		const stateByAgent = buildAgentLiveStateByAgent(roster, [
 			runStartedEvent,
-			thinkingEvent,
 			decisionEvent,
 		]);
 
@@ -78,7 +67,7 @@ describe("useAgentMonitor helpers", () => {
 			currentTranscript: "Higher yields pressure growth multiples.",
 			latestDecision: decisionEvent.decision,
 		});
-		expect(stateByAgent["agent-1"]?.events).toHaveLength(3);
+		expect(stateByAgent["agent-1"]?.events).toHaveLength(2);
 	});
 
 	it("ignores duplicate websocket events after hydration", () => {

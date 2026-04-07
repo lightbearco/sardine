@@ -20,6 +20,12 @@ function fmtVol(value: number) {
 	return String(value);
 }
 
+function divergenceColor(value: number): string {
+	if (value >= 5) return "var(--terminal-red)";
+	if (value <= -5) return "var(--terminal-green)";
+	return "var(--terminal-text-muted)";
+}
+
 const WatchlistRow = memo(function WatchlistRow({
 	ticker,
 	selected,

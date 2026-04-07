@@ -82,6 +82,7 @@ export function serializeAgentEntryForDb(
 	| "parameters"
 	| "realizedPnl"
 	| "lastAutopilotDirective"
+	| "lastLlmTick"
 	| "llmGroup"
 > {
 	return {
@@ -105,6 +106,7 @@ export function serializeAgentEntryForDb(
 		lastAutopilotDirective: entry.state.lastAutopilotDirective
 			? structuredClone(entry.state.lastAutopilotDirective)
 			: null,
+		lastLlmTick: entry.state.lastLlmTick,
 		llmGroup: entry.state.llmGroup,
 	};
 }

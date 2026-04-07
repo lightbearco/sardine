@@ -156,6 +156,7 @@ export const agents = pgTable(
 			.default({}),
 		lastAutopilotDirective: jsonb("last_autopilot_directive"),
 		lastLlmAt: timestamp("last_llm_at"),
+		lastLlmTick: integer("last_llm_tick"),
 		llmGroup: integer("llm_group").notNull().default(0),
 		createdAt: timestamp("created_at").defaultNow(),
 	},

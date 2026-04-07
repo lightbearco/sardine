@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { format } from "date-fns";
 import {
 	ChevronLeftIcon,
+	MessageSquareIcon,
 	PauseIcon,
 	PlayIcon,
 	Settings2Icon,
@@ -22,6 +23,7 @@ import {
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
 import { useSessionDashboard } from "#/hooks/useSessionDashboard";
+import { useChatPanel } from "#/hooks/useChatPanel";
 import { useSimControls } from "#/hooks/useSimControls";
 import { deleteSimulationSessionFn } from "#/hooks/useSimulationSessions";
 import { useSymbolSelection } from "#/hooks/useSymbolSelection";
@@ -51,6 +53,7 @@ export function TopBar() {
 	const router = useRouter();
 	const { simState, play, pause, step, isConnected, setSpeed } =
 		useSimControls();
+	const { isOpen: isChatOpen, toggle: toggleChat } = useChatPanel();
 	const [isConfigOpen, setIsConfigOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [isDeleting, setIsDeleting] = useState(false);
@@ -236,6 +239,20 @@ export function TopBar() {
 							))}
 						</SelectContent>
 					</Select>
+					<Button
+						size="icon-sm"
+						variant={isChatOpen ? "default" : "ghost"}
+						onClick={toggleChat}
+						aria-label={
+							isChatOpen ? "Close what-if terminal" : "Open what-if terminal"
+						}
+					>
+						{isChatOpen ? (
+							<XIcon className="size-4" />
+						) : (
+							<MessageSquareIcon className="size-4" />
+						)}
+					</Button>
 					<Button
 						size="sm"
 						variant="destructive"

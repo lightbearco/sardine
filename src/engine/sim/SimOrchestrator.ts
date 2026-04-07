@@ -1,9 +1,6 @@
-import type { RequestContext } from "@mastra/core/request-context";
 import Decimal from "decimal.js";
-import { and, asc, eq, inArray, type InferSelectModel, sql } from "drizzle-orm";
-import pLimit from "p-limit";
-import { z } from "zod";
-import type { AgentRegistry, AgentRegistryEntry } from "#/agents/AgentRegistry";
+import { and, asc, eq, type InferSelectModel } from "drizzle-orm";
+import type { AgentRegistry } from "#/agents/AgentRegistry";
 import { executeAutopilot } from "#/agents/autopilot";
 import {
 	getActiveGroupIndex,
@@ -11,46 +8,17 @@ import {
 } from "#/agents/batch-scheduler";
 import { requoteMarketMakers } from "#/agents/market-maker-liquidity";
 import { PortfolioManager } from "#/agents/PortfolioManager";
-import { serializeAgentEntryForDb } from "#/agents/persistence";
 import type { Database } from "#/db/index";
 import { createLogger } from "#/lib/logger";
-import {
-	agentEvents as agentEventsTable,
-	agents as agentsTable,
-	commands as commandsTable,
-	orderBookSnapshots as orderBookSnapshotsTable,
-	orders as ordersTable,
-	simConfig as simConfigTable,
-	simulationSessions as simulationSessionsTable,
-	ticks as ticksTable,
-	trades as tradesTable,
-	worldEvents as worldEventsTable,
-} from "#/db/schema";
+import { commands as commandsTable } from "#/db/schema";
 import type { EventBus } from "#/engine/bus/EventBus";
 import type { PublicationBus } from "#/engine/bus/PublicationBus";
 import type { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SIM_DEFAULTS } from "#/lib/constants";
-import {
-	type TradingDecision,
-	tradingDecisionSchema,
-} from "#/mastra/agents/trading-agent";
-import { TRADING_MODEL } from "#/mastra/models";
-import {
-	cloneTradingRequestContext,
-	type TradingRequestContextValues,
-} from "#/mastra/trading-context";
-import { serializeOrderBookSnapshot } from "#/server/sessions";
-import type { OHLCVBar, Order, Trade } from "#/types/market";
-import type { ResearchNote } from "#/types/research";
+import type { TradingDecision } from "#/mastra/agents/trading-agent";
+import type { Trade } from "#/types/market";
 import type {
-	AgentDecisionEvent,
-	AgentDecisionOrder,
 	AgentEvent,
-	AgentFailureReason,
-	AgentFailedEvent,
-	AgentSignal,
-	AgentSignalEvent,
-	AgentThinkingDeltaEvent,
 	InjectWorldEventCommand,
 	ParsedSimCommand,
 	SimOrchestratorState,
@@ -64,12 +32,38 @@ import {
 	simCommandTypeSchema,
 } from "#/types/sim";
 import type { SimClock } from "./SimClock";
+import {
+	runActiveAgents,
+	type ActiveAgentRunnerDeps,
+} from "./active-agent-runner";
+import { computeOhlcvBars } from "./ohlcv";
+import {
+	deduplicateStagedOrders,
+	partitionReplayedOpenOrders,
+	partitionUnsupportedOrders,
+	pruneUnsupportedOpenOrders,
+	syncOrderState,
+} from "./order-pipeline";
+import {
+	deliverReleasedResearch,
+	getReleasedNotesForAgent as getReleasedNotesForAgentExternal,
+} from "./research-delivery";
+import { buildTickPrompt as buildTickPromptExternal } from "./tick-prompt";
+import {
+	persistTick as persistTickExternal,
+	persistSimConfig as persistSimConfigExternal,
+	persistWorldEvents as persistWorldEventsExternal,
+	type CommandUpdate,
+	type SimConfigPersistInput,
+	type TickPersistInput,
+} from "./tick-persistence";
 
 const DEFAULT_LLM_CONCURRENCY = 10;
 const DEFAULT_LLM_TIMEOUT_MS = 15_000;
 const log = createLogger("SimOrchestrator");
 
 type CommandRow = InferSelectModel<typeof commandsTable>;
+
 type TradingAgentStreamLike = {
 	fullStream: AsyncIterable<unknown>;
 	object: Promise<TradingDecision>;
@@ -82,12 +76,6 @@ type TradingAgentLike = {
 	): Promise<TradingAgentStreamLike>;
 };
 
-interface CommandUpdate {
-	id: number;
-	status: "processed" | "rejected";
-	resultMessage: string;
-}
-
 interface ControlCommandOutcome {
 	processed: boolean;
 	stepCount: number;
@@ -99,23 +87,6 @@ interface RuntimeHydrationState {
 	tickIntervalMs: number;
 	lastSummary: TickSummary | null;
 	agentEventSequence?: number;
-}
-
-interface ActiveAgentOutcome {
-	stagedOrders: StagedOrderResult[];
-}
-
-type ReleasedResearchByAgent = Map<string, ResearchNote[]>;
-
-class ActiveAgentGenerationError extends Error {
-	constructor(
-		message: string,
-		public readonly failureReason: AgentFailureReason,
-		public readonly transcript: string,
-	) {
-		super(message);
-		this.name = "ActiveAgentGenerationError";
-	}
 }
 
 export class SimOrchestrator {
@@ -175,11 +146,6 @@ export class SimOrchestrator {
 		return this.tick();
 	}
 
-	/**
-	 * Process only control commands (start/pause/speed/interval) without running a full tick.
-	 * Used by the sim-runner when paused so that "start" commands can resume the simulation.
-	 * Returns true if any commands were processed.
-	 */
 	async processControlCommands(): Promise<ControlCommandOutcome> {
 		const pendingCommands = await this.loadPendingCommands();
 		if (pendingCommands.length === 0) {
@@ -189,10 +155,8 @@ export class SimOrchestrator {
 			};
 		}
 
-		const { commandUpdates, stepCount } = this.processPendingCommands(
-			pendingCommands,
-			this.simClock.simTick,
-		);
+		const { commandUpdates, appliedWorldEvents, stepCount } =
+			this.processPendingCommands(pendingCommands, this.simClock.simTick);
 
 		if (commandUpdates.length > 0) {
 			await this.db.transaction(async (tx) => {
@@ -208,6 +172,17 @@ export class SimOrchestrator {
 				}
 			});
 			await this.persistSimConfig();
+		}
+
+		if (appliedWorldEvents.length > 0) {
+			await persistWorldEventsExternal(
+				this.db,
+				this.sessionId,
+				appliedWorldEvents,
+			);
+			for (const event of appliedWorldEvents) {
+				this.eventBus.emit("world-event", event);
+			}
 		}
 
 		return {
@@ -281,7 +256,8 @@ export class SimOrchestrator {
 				: this.processPendingCommands(pendingCommands, simTick);
 
 			const releasedNotes = this.publicationBus.releaseDue(simTick);
-			const releasedNotesByAgent = this.deliverReleasedResearch(
+			const releasedNotesByAgent = deliverReleasedResearch(
+				this.agentRegistry,
 				releasedNotes,
 				changedAgentIds,
 			);
@@ -291,7 +267,8 @@ export class SimOrchestrator {
 				simTick,
 				this.groupCount,
 			);
-			this.pruneUnsupportedOpenOrders(
+			pruneUnsupportedOpenOrders(
+				this.supportedSymbols,
 				[...active, ...inactive],
 				changedAgentIds,
 			);
@@ -327,7 +304,7 @@ export class SimOrchestrator {
 						continue;
 					}
 
-					if (!this.isSupportedSymbol(existingOrder.symbol)) {
+					if (!this.supportedSymbols.has(existingOrder.symbol)) {
 						log.warn(
 							{ orderId: cancelOrderId, symbol: existingOrder.symbol },
 							"removing cancel target for unsupported symbol",
@@ -359,7 +336,24 @@ export class SimOrchestrator {
 			);
 			stagedOrders.push(...requoteOrders);
 
-			const activeOutcome = await this.runActiveAgents(
+			const activeRunnerDeps: ActiveAgentRunnerDeps = {
+				tradingAgent: this.tradingAgent,
+				agentRegistry: this.agentRegistry,
+				matchingEngine: this.matchingEngine,
+				sessionId: this.sessionId,
+				llmConcurrency: this.llmConcurrency,
+				llmTimeoutMs: this.llmTimeoutMs,
+				buildTickPrompt: buildTickPromptExternal,
+				getReleasedNotesForAgent: (agentId: string) =>
+					getReleasedNotesForAgentExternal(this.agentRegistry, agentId),
+				emitAndCollectAgentEvent: (events, event) =>
+					this.emitAndCollectAgentEvent(events, event),
+				emitThinkingDelta: (delta) =>
+					this.eventBus.emit("agent-thinking", delta),
+			};
+
+			const activeOutcome = await runActiveAgents(
+				activeRunnerDeps,
 				active,
 				simTick,
 				simulatedTime,
@@ -369,10 +363,13 @@ export class SimOrchestrator {
 			);
 
 			stagedOrders.push(...activeOutcome.stagedOrders);
-			const dedupedOrders = this.deduplicateStagedOrders(stagedOrders);
-			const { freshOrders, replayedOrders } =
-				this.partitionReplayedOpenOrders(dedupedOrders);
-			const { validOrders, rejectedOrders } = this.partitionUnsupportedOrders(
+			const dedupedOrders = deduplicateStagedOrders(stagedOrders);
+			const { freshOrders, replayedOrders } = partitionReplayedOpenOrders(
+				this.agentRegistry,
+				dedupedOrders,
+			);
+			const { validOrders, rejectedOrders } = partitionUnsupportedOrders(
+				this.supportedSymbols,
 				freshOrders,
 				changedAgentIds,
 			);
@@ -402,7 +399,7 @@ export class SimOrchestrator {
 			];
 
 			for (const stagedOrder of persistedOrders) {
-				this.syncOrderState(stagedOrder.order, changedAgentIds);
+				syncOrderState(this.agentRegistry, stagedOrder.order, changedAgentIds);
 			}
 
 			for (const agentId of changedAgentIds) {
@@ -434,7 +431,7 @@ export class SimOrchestrator {
 				}
 			}
 
-			const bars = this.computeOhlcvBars(trades);
+			const bars = computeOhlcvBars(trades);
 			const barsBySymbol = new Set(bars.map((bar) => bar.symbol));
 			const refPrices = this.matchingEngine.getReferencePrices();
 			for (const sym of touchedSymbols) {
@@ -506,756 +503,6 @@ export class SimOrchestrator {
 		} finally {
 			this.isTicking = false;
 		}
-	}
-
-	private async runActiveAgents(
-		activeEntries: AgentRegistryEntry[],
-		simTick: number,
-		simulatedTime: Date,
-		changedAgentIds: Set<string>,
-		releasedNotesByAgent: ReleasedResearchByAgent,
-		agentEvents: AgentEvent[],
-	): Promise<ActiveAgentOutcome> {
-		const limit = pLimit(this.llmConcurrency);
-		const tasks = activeEntries.map((entry) =>
-			limit(() =>
-				this.generateForActiveAgent(
-					entry,
-					simTick,
-					simulatedTime,
-					releasedNotesByAgent.get(entry.config.id) ?? [],
-					agentEvents,
-				),
-			),
-		);
-		const settledResults = await Promise.allSettled(tasks);
-		const stagedOrders: StagedOrderResult[] = [];
-
-		for (const [index, settled] of settledResults.entries()) {
-			const entry = activeEntries[index];
-
-			if (settled.status === "fulfilled") {
-				entry.state.lastAutopilotDirective =
-					settled.value.decision.autopilotDirective;
-				entry.state.lastLlmTick = simTick;
-				changedAgentIds.add(entry.config.id);
-				stagedOrders.push(...settled.value.orders);
-				continue;
-			}
-
-			const failure = this.normalizeActiveAgentFailure(settled.reason);
-			const fallbackDirective = this.buildFallbackDirective(entry);
-			log.error(
-				{
-					agentName: entry.config.name,
-					agentId: entry.config.id,
-					simTick,
-					reason: failure.message,
-				},
-				"LLM generation failed for agent",
-			);
-			entry.state.lastAutopilotDirective = fallbackDirective;
-			entry.state.lastLlmTick = simTick;
-			changedAgentIds.add(entry.config.id);
-			this.emitAndCollectAgentEvent(agentEvents, {
-				type: "failed",
-				agentId: entry.config.id,
-				agentName: entry.config.name,
-				tick: simTick,
-				reason: failure.reason,
-				message: failure.message,
-				transcript: failure.transcript,
-				fallbackDirective,
-			} as Omit<AgentFailedEvent, "eventId">);
-		}
-
-		return { stagedOrders };
-	}
-
-	private async generateForActiveAgent(
-		entry: AgentRegistryEntry,
-		simTick: number,
-		simulatedTime: Date,
-		releasedThisTick: ResearchNote[],
-		agentEvents: AgentEvent[],
-	): Promise<{
-		decision: TradingDecision;
-		orders: StagedOrderResult[];
-	}> {
-		const requestContext = cloneTradingRequestContext(
-			entry.requestContext as unknown as RequestContext<TradingRequestContextValues>,
-		);
-		requestContext.set("agent-registry", this.agentRegistry);
-		requestContext.set("matching-engine", this.matchingEngine);
-		requestContext.set("sim-tick", simTick);
-		requestContext.set(
-			"released-research-notes",
-			this.getReleasedNotesForAgent(entry),
-		);
-
-		const prompt = this.buildTickPrompt(
-			entry,
-			simTick,
-			simulatedTime,
-			releasedThisTick,
-		);
-		this.emitAndCollectAgentEvent(agentEvents, {
-			type: "run_started",
-			agentId: entry.config.id,
-			agentName: entry.config.name,
-			tick: simTick,
-		});
-
-		let transcript = "";
-
-		try {
-			const stream = await this.streamWithTimeout(prompt, requestContext);
-			const consumeThinkingPromise = this.consumeAgentThinkingStream(
-				stream.fullStream,
-				entry,
-				simTick,
-				agentEvents,
-				(delta) => {
-					transcript += delta;
-				},
-			);
-
-			const decision = tradingDecisionSchema.parse(await stream.object);
-			await consumeThinkingPromise;
-
-			const decisionOrders: AgentDecisionOrder[] = decision.ordersPlaced.map(
-				(placedOrder) => ({
-					orderId: placedOrder.orderId,
-					symbol: placedOrder.symbol,
-					side: placedOrder.side,
-					type: placedOrder.type,
-					qty: placedOrder.qty,
-					price: placedOrder.price,
-					status: placedOrder.status,
-					filledQty: placedOrder.filledQty,
-					rejectionReason: placedOrder.rejectionReason,
-				}),
-			);
-			const decisionEvent: Omit<AgentDecisionEvent, "eventId"> = {
-				type: "decision",
-				agentId: entry.config.id,
-				agentName: entry.config.name,
-				tick: simTick,
-				decision: {
-					reasoning: decision.reasoning,
-					ordersPlaced: decisionOrders,
-					autopilotDirective: decision.autopilotDirective,
-				},
-			};
-			this.emitAndCollectAgentEvent(agentEvents, decisionEvent);
-
-			const orders = decision.ordersPlaced.map((placedOrder) => ({
-				order: {
-					id: placedOrder.orderId,
-					symbol: placedOrder.symbol,
-					side: placedOrder.side,
-					type: placedOrder.type,
-					price: new Decimal(placedOrder.price),
-					qty: placedOrder.qty,
-					filledQty: placedOrder.filledQty,
-					status: "pending" as const,
-					agentId: entry.config.id,
-					llmReasoning: decision.reasoning,
-					createdAtTick: simTick,
-				},
-				source: "llm" as const,
-				agentName: entry.config.name,
-				reasoning: decision.reasoning,
-			}));
-
-			for (const { order, reasoning } of orders) {
-				const signal: AgentSignal = {
-					agentId: entry.config.id,
-					agentName: entry.config.name,
-					side: order.side,
-					symbol: order.symbol,
-					price: order.type === "market" ? 0 : order.price.toNumber(),
-					qty: order.qty,
-					reasoning,
-					tick: simTick,
-				};
-
-				this.emitAndCollectAgentEvent(agentEvents, {
-					type: "signal",
-					agentId: entry.config.id,
-					agentName: entry.config.name,
-					tick: simTick,
-					signal,
-				} as Omit<AgentSignalEvent, "eventId">);
-			}
-
-			return { decision, orders };
-		} catch (error) {
-			throw this.classifyActiveAgentFailure(error, transcript);
-		}
-	}
-
-	private async streamWithTimeout(
-		prompt: string,
-		requestContext: ReturnType<typeof cloneTradingRequestContext>,
-	): Promise<TradingAgentStreamLike> {
-		const controller = new AbortController();
-		const timeoutHandle = setTimeout(() => {
-			controller.abort("LLM generation timed out");
-		}, this.llmTimeoutMs);
-
-		try {
-			return await this.tradingAgent.stream(prompt, {
-				resourceId: this.sessionId,
-				requestContext,
-				maxSteps: 15,
-				abortSignal: controller.signal,
-				structuredOutput: {
-					schema: tradingDecisionSchema,
-					model: this.resolveStructuredOutputModel(),
-					jsonPromptInjection: true,
-				},
-			});
-		} catch (error) {
-			if (controller.signal.aborted) {
-				throw new ActiveAgentGenerationError(
-					"LLM generation timed out",
-					"timeout",
-					"",
-				);
-			}
-
-			throw error;
-		} finally {
-			clearTimeout(timeoutHandle);
-		}
-	}
-
-	private resolveStructuredOutputModel() {
-		return TRADING_MODEL;
-	}
-
-	private async consumeAgentThinkingStream(
-		fullStream: AsyncIterable<unknown>,
-		entry: AgentRegistryEntry,
-		simTick: number,
-		agentEvents: AgentEvent[],
-		onDelta: (delta: string) => void,
-	): Promise<void> {
-		let transcript = "";
-
-		for await (const chunk of fullStream) {
-			const delta = this.extractAgentThinkingDelta(chunk);
-			if (!delta) {
-				continue;
-			}
-
-			transcript += delta;
-			onDelta(delta);
-			this.emitAndCollectAgentEvent(agentEvents, {
-				type: "thinking_delta",
-				agentId: entry.config.id,
-				agentName: entry.config.name,
-				tick: simTick,
-				delta,
-				transcript,
-			} as Omit<AgentThinkingDeltaEvent, "eventId">);
-		}
-	}
-
-	private extractAgentThinkingDelta(chunk: unknown): string | null {
-		if (!chunk || typeof chunk !== "object") {
-			return null;
-		}
-
-		const streamChunk = chunk as {
-			type?: string;
-			payload?: {
-				text?: string;
-			};
-		};
-
-		if (
-			streamChunk.type !== "text-delta" &&
-			streamChunk.type !== "reasoning-delta"
-		) {
-			return null;
-		}
-
-		return typeof streamChunk.payload?.text === "string"
-			? streamChunk.payload.text
-			: null;
-	}
-
-	private classifyActiveAgentFailure(
-		error: unknown,
-		transcript: string,
-	): ActiveAgentGenerationError {
-		if (error instanceof ActiveAgentGenerationError) {
-			return new ActiveAgentGenerationError(
-				error.message,
-				error.failureReason,
-				transcript || error.transcript,
-			);
-		}
-
-		if (error instanceof z.ZodError || this.isSchemaValidationError(error)) {
-			const message =
-				error instanceof Error
-					? error.message
-					: "Structured output validation failed";
-			return new ActiveAgentGenerationError(
-				message,
-				"schema_validation_failed",
-				transcript,
-			);
-		}
-
-		const message =
-			error instanceof Error ? error.message : "LLM generation failed";
-		return new ActiveAgentGenerationError(message, "llm_error", transcript);
-	}
-
-	private normalizeActiveAgentFailure(error: unknown): {
-		reason: AgentFailureReason;
-		message: string;
-		transcript: string;
-	} {
-		if (error instanceof ActiveAgentGenerationError) {
-			return {
-				reason: error.failureReason,
-				message: error.message,
-				transcript: error.transcript,
-			};
-		}
-
-		if (error instanceof Error) {
-			return {
-				reason: this.isSchemaValidationError(error)
-					? "schema_validation_failed"
-					: "llm_error",
-				message: error.message,
-				transcript: "",
-			};
-		}
-
-		return {
-			reason: "llm_error",
-			message: "LLM generation failed",
-			transcript: "",
-		};
-	}
-
-	private isSchemaValidationError(error: unknown): boolean {
-		if (!(error instanceof Error)) {
-			return false;
-		}
-
-		const message = error.message.toLowerCase();
-		return (
-			message.includes("schema") ||
-			message.includes("validation") ||
-			message.includes("structured output") ||
-			message.includes("invalid_type") ||
-			message.includes("zod")
-		);
-	}
-
-	private syncOrderState(order: Order, changedAgentIds: Set<string>): void {
-		const entry = this.agentRegistry.get(order.agentId);
-		if (!entry) {
-			return;
-		}
-
-		if (
-			order.type === "limit" &&
-			(order.status === "open" || order.status === "partial")
-		) {
-			entry.state.openOrders.set(order.id, order);
-		} else {
-			entry.state.openOrders.delete(order.id);
-		}
-
-		changedAgentIds.add(order.agentId);
-	}
-
-	private pruneUnsupportedOpenOrders(
-		entries: AgentRegistryEntry[],
-		changedAgentIds: Set<string>,
-	): void {
-		for (const entry of entries) {
-			const supportedOpenOrders = new Map<string, Order>();
-			let removedUnsupported = false;
-
-			for (const [orderId, order] of entry.state.openOrders.entries()) {
-				if (this.isSupportedSymbol(order.symbol)) {
-					supportedOpenOrders.set(orderId, order);
-					continue;
-				}
-
-				removedUnsupported = true;
-				log.warn(
-					{ orderId: order.id, symbol: order.symbol },
-					"dropping stale open order for unsupported symbol",
-				);
-			}
-
-			if (!removedUnsupported) {
-				continue;
-			}
-
-			entry.state.openOrders = supportedOpenOrders;
-			changedAgentIds.add(entry.config.id);
-		}
-	}
-
-	private deduplicateStagedOrders(
-		stagedOrders: StagedOrderResult[],
-	): StagedOrderResult[] {
-		const ordersById = new Map<string, StagedOrderResult>();
-
-		for (const stagedOrder of stagedOrders) {
-			const existingOrder = ordersById.get(stagedOrder.order.id);
-			if (!existingOrder) {
-				ordersById.set(stagedOrder.order.id, stagedOrder);
-				continue;
-			}
-
-			if (
-				this.hasConflictingOrderIdentity(existingOrder.order, stagedOrder.order)
-			) {
-				log.error(
-					{
-						orderId: stagedOrder.order.id,
-						existing: {
-							agentId: existingOrder.order.agentId,
-							symbol: existingOrder.order.symbol,
-							side: existingOrder.order.side,
-							type: existingOrder.order.type,
-						},
-						incoming: {
-							agentId: stagedOrder.order.agentId,
-							symbol: stagedOrder.order.symbol,
-							side: stagedOrder.order.side,
-							type: stagedOrder.order.type,
-						},
-					},
-					"conflicting replay for order; discarding duplicate stage",
-				);
-				continue;
-			}
-
-			log.warn(
-				{ orderId: stagedOrder.order.id },
-				"duplicate staged order; keeping latest version",
-			);
-			ordersById.set(stagedOrder.order.id, stagedOrder);
-		}
-
-		return Array.from(ordersById.values());
-	}
-
-	private partitionUnsupportedOrders(
-		stagedOrders: StagedOrderResult[],
-		changedAgentIds: Set<string>,
-	): {
-		validOrders: StagedOrderResult[];
-		rejectedOrders: StagedOrderResult[];
-	} {
-		const validOrders: StagedOrderResult[] = [];
-		const rejectedOrders: StagedOrderResult[] = [];
-
-		for (const stagedOrder of stagedOrders) {
-			if (this.isSupportedSymbol(stagedOrder.order.symbol)) {
-				validOrders.push(stagedOrder);
-				continue;
-			}
-
-			const rejectionReason = `[system] unsupported_symbol:${stagedOrder.order.symbol}`;
-			log.warn(
-				{ orderId: stagedOrder.order.id, symbol: stagedOrder.order.symbol },
-				"rejecting order for unsupported symbol",
-			);
-			rejectedOrders.push({
-				...stagedOrder,
-				order: {
-					...stagedOrder.order,
-					status: "cancelled",
-					llmReasoning: stagedOrder.order.llmReasoning
-						? `${stagedOrder.order.llmReasoning}\n\n${rejectionReason}`
-						: rejectionReason,
-				},
-				reasoning: stagedOrder.reasoning
-					? `${stagedOrder.reasoning}\n\n${rejectionReason}`
-					: rejectionReason,
-			});
-			changedAgentIds.add(stagedOrder.order.agentId);
-		}
-
-		return {
-			validOrders,
-			rejectedOrders,
-		};
-	}
-
-	private partitionReplayedOpenOrders(stagedOrders: StagedOrderResult[]): {
-		freshOrders: StagedOrderResult[];
-		replayedOrders: StagedOrderResult[];
-	} {
-		const freshOrders: StagedOrderResult[] = [];
-		const replayedOrders: StagedOrderResult[] = [];
-
-		for (const stagedOrder of stagedOrders) {
-			const existingOrder = this.agentRegistry
-				.get(stagedOrder.order.agentId)
-				?.state.openOrders.get(stagedOrder.order.id);
-
-			if (!existingOrder) {
-				freshOrders.push(stagedOrder);
-				continue;
-			}
-
-			log.warn(
-				{ orderId: stagedOrder.order.id },
-				"ignoring replayed open order; persisting current state without re-matching",
-			);
-			replayedOrders.push({
-				...stagedOrder,
-				order: existingOrder,
-				reasoning: stagedOrder.reasoning ?? existingOrder.llmReasoning ?? null,
-			});
-		}
-
-		return {
-			freshOrders,
-			replayedOrders,
-		};
-	}
-
-	private hasConflictingOrderIdentity(left: Order, right: Order): boolean {
-		return (
-			left.agentId !== right.agentId ||
-			left.symbol !== right.symbol ||
-			left.side !== right.side ||
-			left.type !== right.type
-		);
-	}
-
-	private isSupportedSymbol(symbol: string): boolean {
-		return this.supportedSymbols.has(symbol);
-	}
-
-	private deliverReleasedResearch(
-		releasedNotes: ReturnType<PublicationBus["releaseDue"]>,
-		changedAgentIds: Set<string>,
-	): ReleasedResearchByAgent {
-		const notesByTier = {
-			tier1: releasedNotes.tier1,
-			tier2: releasedNotes.tier2,
-			tier3: releasedNotes.tier3,
-		} as const;
-		const deliveredByAgent: ReleasedResearchByAgent = new Map();
-
-		for (const entry of this.agentRegistry.getAll()) {
-			if (
-				entry.state.tier !== "tier1" &&
-				entry.state.tier !== "tier2" &&
-				entry.state.tier !== "tier3"
-			) {
-				continue;
-			}
-
-			const tierNotes = notesByTier[entry.state.tier];
-			let inboxChanged = false;
-			const newlyDelivered: ResearchNote[] = [];
-
-			for (const note of tierNotes) {
-				if (entry.state.researchInbox.has(note.id)) {
-					continue;
-				}
-
-				entry.state.researchInbox.set(note.id, {
-					...note,
-					releasedToTier: entry.state.tier,
-				});
-				newlyDelivered.push({
-					...note,
-					releasedToTier: entry.state.tier,
-				});
-				inboxChanged = true;
-			}
-
-			if (newlyDelivered.length > 0) {
-				deliveredByAgent.set(entry.config.id, newlyDelivered);
-			}
-
-			if (inboxChanged) {
-				changedAgentIds.add(entry.config.id);
-			}
-		}
-
-		return deliveredByAgent;
-	}
-
-	private getReleasedNotesForAgent(entry: AgentRegistryEntry): ResearchNote[] {
-		return Array.from(entry.state.researchInbox.values()).sort(
-			(left, right) => right.publishedAtTick - left.publishedAtTick,
-		);
-	}
-
-	private buildTickPrompt(
-		entry: AgentRegistryEntry,
-		simTick: number,
-		simulatedTime: Date,
-		releasedThisTick: ResearchNote[] = [],
-	): string {
-		const notes = this.getReleasedNotesForPrompt(entry, releasedThisTick).slice(
-			0,
-			3,
-		);
-		const noteSummary =
-			notes.length === 0
-				? "No new research notes were released to you this tick."
-				: notes
-						.map(
-							(note) =>
-								`- ${note.headline} (${note.sentiment}, confidence ${note.confidence}) on ${note.symbols.join(", ")}`,
-						)
-						.join("\n");
-
-		const capital = entry.config.capital;
-		const cash = entry.state.cash;
-		const nav = entry.state.nav;
-		const totalPnl = nav.minus(capital);
-		const pnlPct =
-			capital > 0
-				? totalPnl.div(capital).times(100).toDecimalPlaces(2).toString()
-				: "0";
-
-		let portfolioSummary = `Cash: $${cash.toDecimalPlaces(2).toString()} | NAV: $${nav.toDecimalPlaces(2).toString()} | P&L: $${totalPnl.toDecimalPlaces(2).toString()} (${pnlPct}%)`;
-
-		const positions = Array.from(entry.state.positions.entries());
-		if (positions.length > 0) {
-			const refPrices = this.matchingEngine.getReferencePrices();
-			const positionLines = positions.map(([symbol, pos]) => {
-				const refPrice = refPrices.get(symbol);
-				const markPrice = refPrice ?? pos.avgCost;
-				const marketValue = markPrice.times(pos.qty);
-				const weightPct = nav.gt(0)
-					? marketValue.div(nav).times(100).toDecimalPlaces(2).toString()
-					: "0";
-				const unrealizedPnl = markPrice.minus(pos.avgCost).times(pos.qty);
-				const realizedPnl =
-					entry.state.realizedPnl.get(symbol) ?? new Decimal(0);
-				return `${symbol}: ${pos.qty} shares @ $${pos.avgCost.toDecimalPlaces(2)} | Mark $${markPrice.toDecimalPlaces(2)} | MV $${marketValue.toDecimalPlaces(2)} (${weightPct}%) | Unrealized $${unrealizedPnl.toDecimalPlaces(2)} | Realized $${realizedPnl.toDecimalPlaces(2)}`;
-			});
-			portfolioSummary += `\n\nPositions (${positions.length}):\n${positionLines.join("\n")}`;
-		} else {
-			portfolioSummary += "\n\nNo open positions.";
-		}
-
-		const openOrderCount = entry.state.openOrders.size;
-		if (openOrderCount > 0) {
-			portfolioSummary += `\n\nOpen orders: ${openOrderCount}`;
-		}
-
-		const fills = entry.state.pendingFills;
-		let fillSummary = "";
-		if (fills.length > 0) {
-			const fillLines = fills.map((fill) => {
-				const side = fill.buyerAgentId === entry.config.id ? "BUY" : "SELL";
-				return `- ${side} ${fill.qty} ${fill.symbol} @ $${fill.price.toDecimalPlaces(2)} (tick ${fill.tick})`;
-			});
-			fillSummary = `Fills since your last turn:\n${fillLines.join("\n")}`;
-		}
-
-		const parts = [
-			`Simulation tick: ${simTick}`,
-			`Simulated market time: ${simulatedTime.toISOString()}`,
-			"Your portfolio:",
-			portfolioSummary,
-		];
-
-		if (fillSummary) {
-			parts.push(fillSummary);
-		}
-
-		parts.push(
-			"Recent released research:",
-			noteSummary,
-			"Decide whether to trade this tick. Use tools when you need market data, additional portfolio context, or to stage an order.",
-		);
-
-		const prompt = parts.join("\n\n");
-
-		entry.state.pendingFills = [];
-
-		return prompt;
-	}
-
-	private getReleasedNotesForPrompt(
-		entry: AgentRegistryEntry,
-		releasedThisTick: ResearchNote[],
-	): ResearchNote[] {
-		const inboxNotes = this.getReleasedNotesForAgent(entry);
-		if (releasedThisTick.length === 0) {
-			return inboxNotes;
-		}
-
-		const merged = new Map<string, ResearchNote>();
-		for (const note of releasedThisTick) {
-			merged.set(note.id, note);
-		}
-		for (const note of inboxNotes) {
-			if (!merged.has(note.id)) {
-				merged.set(note.id, note);
-			}
-		}
-
-		return Array.from(merged.values()).sort(
-			(left, right) => right.publishedAtTick - left.publishedAtTick,
-		);
-	}
-
-	private buildFallbackDirective(
-		entry: AgentRegistryEntry,
-	): TradingDecision["autopilotDirective"] {
-		return {
-			standingOrders: [],
-			holdPositions: Array.from(entry.state.positions.keys()),
-		};
-	}
-
-	private computeOhlcvBars(trades: Trade[]): OHLCVBar[] {
-		const bars = new Map<string, OHLCVBar>();
-
-		for (const trade of trades) {
-			const existingBar = bars.get(trade.symbol);
-
-			if (!existingBar) {
-				bars.set(trade.symbol, {
-					symbol: trade.symbol,
-					open: trade.price,
-					high: trade.price,
-					low: trade.price,
-					close: trade.price,
-					volume: trade.qty,
-					tick: trade.tick,
-				});
-				continue;
-			}
-
-			existingBar.high = Decimal.max(existingBar.high, trade.price);
-			existingBar.low = Decimal.min(existingBar.low, trade.price);
-			existingBar.close = trade.price;
-			existingBar.volume += trade.qty;
-		}
-
-		return Array.from(bars.values());
-	}
-
-	private queueRuntimeLog(message: string): void {
-		this.runtimeLogMessages.push(message);
 	}
 
 	private async loadPendingCommands(): Promise<CommandRow[]> {
@@ -1426,296 +673,8 @@ export class SimOrchestrator {
 		};
 	}
 
-	private async persistTick(
-		stagedOrders: StagedOrderResult[],
-		trades: Trade[],
-		bars: OHLCVBar[],
-		agentEvents: AgentEvent[],
-		commandUpdates: CommandUpdate[],
-		appliedWorldEvents: WorldEvent[],
-		changedAgentIds: Set<string>,
-		touchedSymbols: Set<string>,
-		simulatedTime: Date,
-	): Promise<void> {
-		const changedEntries = Array.from(changedAgentIds)
-			.map((agentId) => this.agentRegistry.get(agentId))
-			.filter((entry): entry is AgentRegistryEntry => entry !== undefined);
-
-		await this.db.transaction(async (tx) => {
-			if (agentEvents.length > 0) {
-				await tx.insert(agentEventsTable).values(
-					agentEvents.map((event) => ({
-						eventId: event.eventId,
-						sessionId: this.sessionId,
-						agentId: event.agentId,
-						type: event.type,
-						tick: event.tick,
-						payload: event,
-					})),
-				);
-			}
-
-			if (stagedOrders.length > 0) {
-				await tx
-					.insert(ordersTable)
-					.values(
-						stagedOrders.map(({ order, reasoning }) => ({
-							id: order.id,
-							sessionId: this.sessionId,
-							tick: order.createdAtTick,
-							agentId: order.agentId,
-							symbol: order.symbol,
-							type: order.type,
-							side: order.side,
-							status: order.status,
-							price: order.type === "market" ? null : order.price.toNumber(),
-							quantity: order.qty,
-							filledQuantity: order.filledQty,
-							llmReasoning: reasoning,
-						})),
-					)
-					.onConflictDoUpdate({
-						target: ordersTable.id,
-						set: {
-							status: sql`excluded.status`,
-							filledQuantity: sql`excluded.filled_quantity`,
-							llmReasoning: sql`excluded.llm_reasoning`,
-						},
-					});
-			}
-
-			if (trades.length > 0) {
-				await tx.insert(tradesTable).values(
-					trades.map((trade) => ({
-						id: trade.id,
-						sessionId: this.sessionId,
-						tick: trade.tick,
-						symbol: trade.symbol,
-						buyOrderId: trade.buyOrderId,
-						sellOrderId: trade.sellOrderId,
-						buyerAgentId: trade.buyerAgentId,
-						sellerAgentId: trade.sellerAgentId,
-						price: trade.price.toNumber(),
-						quantity: trade.qty,
-					})),
-				);
-			}
-
-			if (bars.length > 0) {
-				await tx.insert(ticksTable).values(
-					bars.map((bar) => ({
-						sessionId: this.sessionId,
-						tick: bar.tick,
-						symbol: bar.symbol,
-						open: bar.open.toNumber(),
-						high: bar.high.toNumber(),
-						low: bar.low.toNumber(),
-						close: bar.close.toNumber(),
-						volume: bar.volume,
-					})),
-				);
-			}
-
-			for (const entry of changedEntries) {
-				const row = serializeAgentEntryForDb(entry, this.sessionId);
-				await tx
-					.insert(agentsTable)
-					.values({
-						...row,
-						lastLlmAt:
-							entry.state.lastLlmTick === null ? null : new Date(simulatedTime),
-					})
-					.onConflictDoUpdate({
-						target: agentsTable.id,
-						set: {
-							name: row.name,
-							tier: row.tier,
-							status: row.status,
-							entityType: row.entityType,
-							strategyType: row.strategyType,
-							modelId: row.modelId,
-							persona: row.persona,
-							mandateSectors: row.mandateSectors,
-							riskTolerance: row.riskTolerance,
-							startingCapital: row.startingCapital,
-							currentCash: row.currentCash,
-							currentNav: row.currentNav,
-							positions: row.positions,
-							parameters: row.parameters,
-							realizedPnl: row.realizedPnl,
-							lastAutopilotDirective: row.lastAutopilotDirective,
-							llmGroup: row.llmGroup,
-							lastLlmAt:
-								entry.state.lastLlmTick === null
-									? null
-									: new Date(simulatedTime),
-						},
-					});
-			}
-
-			for (const worldEvent of appliedWorldEvents) {
-				await tx
-					.insert(worldEventsTable)
-					.values({
-						sessionId: this.sessionId,
-						eventId: worldEvent.id,
-						type: worldEvent.type,
-						source: worldEvent.source,
-						title: worldEvent.title,
-						description:
-							typeof worldEvent.payload.description === "string"
-								? worldEvent.payload.description
-								: worldEvent.title,
-						magnitude: worldEvent.magnitude,
-						affectedSymbols: [...worldEvent.affectedSymbols],
-						payload: worldEvent.payload,
-						status: worldEvent.status,
-						appliedAtTick: worldEvent.appliedAtTick,
-						appliedAt: new Date(),
-					})
-					.onConflictDoUpdate({
-						target: worldEventsTable.eventId,
-						set: {
-							type: worldEvent.type,
-							source: worldEvent.source,
-							title: worldEvent.title,
-							description:
-								typeof worldEvent.payload.description === "string"
-									? worldEvent.payload.description
-									: worldEvent.title,
-							magnitude: worldEvent.magnitude,
-							affectedSymbols: [...worldEvent.affectedSymbols],
-							payload: worldEvent.payload,
-							status: worldEvent.status,
-							appliedAtTick: worldEvent.appliedAtTick,
-							appliedAt: new Date(),
-						},
-					});
-			}
-
-			for (const commandUpdate of commandUpdates) {
-				await tx
-					.update(commandsTable)
-					.set({
-						status: commandUpdate.status,
-						resultMessage: commandUpdate.resultMessage,
-						processedAt: new Date(),
-					})
-					.where(
-						and(
-							eq(commandsTable.sessionId, this.sessionId),
-							eq(commandsTable.id, commandUpdate.id),
-						),
-					);
-			}
-
-			for (const symbol of touchedSymbols) {
-				const snapshot = this.matchingEngine.getSnapshot(symbol);
-				const serializedSnapshot = serializeOrderBookSnapshot({
-					sessionId: this.sessionId,
-					snapshot,
-					tick: this.simClock.simTick,
-				});
-
-				await tx
-					.insert(orderBookSnapshotsTable)
-					.values(serializedSnapshot)
-					.onConflictDoUpdate({
-						target: [
-							orderBookSnapshotsTable.sessionId,
-							orderBookSnapshotsTable.symbol,
-						],
-						set: {
-							tick: serializedSnapshot.tick,
-							bids: serializedSnapshot.bids,
-							asks: serializedSnapshot.asks,
-							lastPrice: serializedSnapshot.lastPrice,
-							spread: serializedSnapshot.spread,
-							updatedAt: serializedSnapshot.updatedAt,
-						},
-					});
-			}
-
-			await tx
-				.insert(simConfigTable)
-				.values({
-					sessionId: this.sessionId,
-					isRunning: this.isRunning,
-					currentTick: this.simClock.simTick,
-					simulatedMarketTime: simulatedTime,
-					speedMultiplier: this.speedMultiplier,
-					tickIntervalMs: this.tickIntervalMs,
-					lastSummary: this.lastSummary,
-				})
-				.onConflictDoUpdate({
-					target: simConfigTable.sessionId,
-					set: {
-						isRunning: this.isRunning,
-						currentTick: this.simClock.simTick,
-						simulatedMarketTime: simulatedTime,
-						speedMultiplier: this.speedMultiplier,
-						tickIntervalMs: this.tickIntervalMs,
-						lastSummary: this.lastSummary,
-						updatedAt: new Date(),
-					},
-				});
-
-			await tx
-				.update(simulationSessionsTable)
-				.set({
-					status: "active",
-					updatedAt: new Date(),
-					endedAt: null,
-				})
-				.where(
-					and(
-						eq(simulationSessionsTable.id, this.sessionId),
-						inArray(simulationSessionsTable.status, ["pending", "active"]),
-					),
-				);
-		});
-	}
-
-	private async persistSimConfig(): Promise<void> {
-		const simulatedTime = new Date(this.simClock.simulatedTime);
-
-		await this.db
-			.insert(simConfigTable)
-			.values({
-				sessionId: this.sessionId,
-				isRunning: this.isRunning,
-				currentTick: this.simClock.simTick,
-				simulatedMarketTime: simulatedTime,
-				speedMultiplier: this.speedMultiplier,
-				tickIntervalMs: this.tickIntervalMs,
-				lastSummary: this.lastSummary,
-			})
-			.onConflictDoUpdate({
-				target: simConfigTable.sessionId,
-				set: {
-					isRunning: this.isRunning,
-					currentTick: this.simClock.simTick,
-					simulatedMarketTime: simulatedTime,
-					speedMultiplier: this.speedMultiplier,
-					tickIntervalMs: this.tickIntervalMs,
-					lastSummary: this.lastSummary,
-					updatedAt: new Date(),
-				},
-			});
-
-		await this.db
-			.update(simulationSessionsTable)
-			.set({
-				status: "active",
-				updatedAt: new Date(),
-				endedAt: null,
-			})
-			.where(
-				and(
-					eq(simulationSessionsTable.id, this.sessionId),
-					inArray(simulationSessionsTable.status, ["pending", "active"]),
-				),
-			);
+	private queueRuntimeLog(message: string): void {
+		this.runtimeLogMessages.push(message);
 	}
 
 	private emitAndCollectAgentEvent(
@@ -1729,6 +688,55 @@ export class SimOrchestrator {
 		agentEvents.push(nextEvent);
 		this.eventBus.emit("agent-event", nextEvent);
 		return nextEvent;
+	}
+
+	private async persistTick(
+		stagedOrders: StagedOrderResult[],
+		trades: Trade[],
+		bars: import("#/types/market").OHLCVBar[],
+		agentEvents: AgentEvent[],
+		commandUpdates: CommandUpdate[],
+		appliedWorldEvents: WorldEvent[],
+		changedAgentIds: Set<string>,
+		touchedSymbols: Set<string>,
+		simulatedTime: Date,
+	): Promise<void> {
+		const input: TickPersistInput = {
+			stagedOrders,
+			trades,
+			bars,
+			agentEvents,
+			commandUpdates,
+			appliedWorldEvents,
+			changedAgentIds,
+			touchedSymbols,
+			simulatedTime,
+			isRunning: this.isRunning,
+			speedMultiplier: this.speedMultiplier,
+			tickIntervalMs: this.tickIntervalMs,
+			lastSummary: this.lastSummary,
+		};
+		await persistTickExternal(
+			this.db,
+			this.sessionId,
+			this.agentRegistry,
+			this.matchingEngine,
+			this.simClock.simTick,
+			input,
+		);
+	}
+
+	private async persistSimConfig(): Promise<void> {
+		const simulatedTime = new Date(this.simClock.simulatedTime);
+		const input: SimConfigPersistInput = {
+			isRunning: this.isRunning,
+			speedMultiplier: this.speedMultiplier,
+			tickIntervalMs: this.tickIntervalMs,
+			lastSummary: this.lastSummary,
+			simTick: this.simClock.simTick,
+			simulatedTime,
+		};
+		await persistSimConfigExternal(this.db, this.sessionId, input);
 	}
 
 	private buildRuntimeState(activeGroupSize?: number): SimRuntimeState {

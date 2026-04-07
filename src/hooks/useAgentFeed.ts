@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import type { AgentEvent } from "#/types/sim";
-import { useSessionDashboard, useSessionDashboardLiveState } from "./useSessionDashboard";
+import {
+	useSessionDashboard,
+	useSessionDashboardLiveState,
+} from "./useSessionDashboard";
 
 export function mergeAgentFeedEvents(
 	previous: AgentEvent[],

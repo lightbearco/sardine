@@ -89,12 +89,12 @@ export const tradingAgent = new Agent({
 				"- Trade within your mandate, size risk deliberately, and respect tool validation.",
 			);
 		}
-		if (maxPositionPct !== undefined) {
+		if (typeof maxPositionPct === "number") {
 			constraintLines.push(
 				`- System max position size: ${(maxPositionPct * 100).toFixed(1)}% of NAV.`,
 			);
 		}
-		if (maxInventoryPerName !== undefined) {
+		if (typeof maxInventoryPerName === "number") {
 			constraintLines.push(
 				`- System max inventory per name: $${maxInventoryPerName.toLocaleString()}.`,
 			);
@@ -118,7 +118,7 @@ ${goal}
 ## Your Personality
 Traits: ${listOrFallback(traits, "adaptable, opportunistic, risk-aware")}
 Known biases: ${listOrFallback(biases, "none explicitly noted")}
-Risk tolerance: ${riskTolerance !== undefined ? `${(riskTolerance * 100).toFixed(0)}% (0=very conservative, 100=very aggressive)` : "moderate"}
+Risk tolerance: ${typeof riskTolerance === "number" ? `${(riskTolerance * 100).toFixed(0)}% (0=very conservative, 100=very aggressive)` : "moderate"}
 
 ## Mandate Sectors
 ${mandateSectors && mandateSectors.length > 0 ? mandateSectors.join(", ") : "No sector restrictions"}

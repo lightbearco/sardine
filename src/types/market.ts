@@ -37,6 +37,8 @@ export interface Trade {
 	price: Decimal;
 	qty: number;
 	tick: number;
+	buyOrderState?: Order;
+	sellOrderState?: Order;
 }
 
 export interface OHLCVBar {

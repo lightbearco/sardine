@@ -3,9 +3,13 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "#/db/index";
 import { commands } from "#/db/schema";
+import {
+	resolveChatSessionId,
+	type ChatRequestContextValues,
+} from "#/mastra/chat-context";
 
 const eventInjectionInputSchema = z.object({
-	sessionId: z.string().min(1),
+	sessionId: z.string().min(1).optional(),
 	type: z.enum([
 		"rate_decision",
 		"earnings",
@@ -34,14 +38,21 @@ const eventInjectionOutputSchema = z.object({
 export const eventInjectionTool = createTool<
 	"event-injection",
 	typeof eventInjectionInputSchema,
-	typeof eventInjectionOutputSchema
+	typeof eventInjectionOutputSchema,
+	undefined,
+	undefined,
+	ChatRequestContextValues
 >({
 	id: "event-injection",
 	description:
 		"Inject a world event into the running simulation. The event is queued as a pending command and will be applied at the next tick boundary by the simulation worker. Returns an eventId for tracking.",
 	inputSchema: eventInjectionInputSchema,
 	outputSchema: eventInjectionOutputSchema,
-	execute: async (input) => {
+	execute: async (input, context) => {
+		const sessionId = resolveChatSessionId({
+			sessionId: input.sessionId,
+			requestContext: context?.requestContext,
+		});
 		const eventId = nanoid();
 		const payload = {
 			eventId,
@@ -58,7 +69,7 @@ export const eventInjectionTool = createTool<
 		const [row] = await db
 			.insert(commands)
 			.values({
-				sessionId: input.sessionId,
+				sessionId,
 				type: "inject_world_event",
 				payload,
 				status: "pending",

@@ -1,5 +1,4 @@
 import { createTool } from "@mastra/core/tools";
-import Decimal from "decimal.js";
 import { z } from "zod";
 import type { TradingRequestContextValues } from "#/mastra/trading-context";
 
@@ -22,7 +21,9 @@ const marketDataOutputSchema = z.object({
 	spread: z.string().nullable(),
 });
 
-function decimalToString(value: Decimal | null): string | null {
+function decimalToString(
+	value: { toString: () => string } | null,
+): string | null {
 	return value ? value.toString() : null;
 }
 

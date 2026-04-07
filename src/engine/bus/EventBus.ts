@@ -1,7 +1,12 @@
 import EventEmitter from "eventemitter3";
 import type { Trade, Order, LOBSnapshot, OHLCVBar } from "#/types/market";
 import type { ResearchNote } from "#/types/research";
-import type { AgentEvent, SimRuntimeState, WorldEvent } from "#/types/sim";
+import type {
+	AgentEvent,
+	AgentThinkingDelta,
+	SimRuntimeState,
+	WorldEvent,
+} from "#/types/sim";
 
 export interface EventMap {
 	trade: [trade: Trade];
@@ -11,6 +16,7 @@ export interface EventMap {
 	ohlcv: [bar: OHLCVBar];
 	"world-event": [event: WorldEvent];
 	"agent-event": [event: AgentEvent];
+	"agent-thinking": [delta: AgentThinkingDelta];
 	"research-published": [note: ResearchNote];
 	"sim-state": [state: SimRuntimeState];
 	divergence: [data: { symbol: string; divergencePct: number }];

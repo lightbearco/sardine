@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSessionDashboard, useSessionDashboardLiveState } from "./useSessionDashboard";
+import {
+	useSessionDashboard,
+	useSessionDashboardLiveState,
+} from "./useSessionDashboard";
 import type {
 	AgentDecisionEvent,
 	AgentEvent,
@@ -21,7 +24,9 @@ export interface AgentLiveState {
 	latestSignal: AgentSignal | null;
 }
 
-function defaultAgentLiveState(agent?: SessionAgentRosterEntry): AgentLiveState {
+function defaultAgentLiveState(
+	agent?: SessionAgentRosterEntry,
+): AgentLiveState {
 	return {
 		agentName: agent?.name ?? "",
 		status: agent?.status ?? "active",
@@ -53,14 +58,6 @@ export function applyAgentEventToLiveState(
 				currentTranscript: "",
 				isRunning: true,
 				latestFailure: null,
-			};
-		case "thinking_delta":
-			return {
-				...current,
-				agentName: event.agentName,
-				events: nextEvents,
-				currentTranscript: event.transcript,
-				isRunning: true,
 			};
 		case "decision":
 			return {
@@ -132,7 +129,8 @@ export function resolveSelectedAgentId(input: {
 }
 
 export function useAgentMonitor(initialSelectedAgentId?: string) {
-	const { isConnected, agentEvents } = useSessionDashboardLiveState();
+	const { isConnected, agentEvents, agentThinking } =
+		useSessionDashboardLiveState();
 	const { isLive, agentRoster } = useSessionDashboard();
 	const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(
 		initialSelectedAgentId,
@@ -146,7 +144,7 @@ export function useAgentMonitor(initialSelectedAgentId?: string) {
 		() =>
 			agentRoster
 				.map((agent) => agent.id)
-					.sort((left, right) => left.localeCompare(right)),
+				.sort((left, right) => left.localeCompare(right)),
 		[agentRoster],
 	);
 
@@ -155,11 +153,23 @@ export function useAgentMonitor(initialSelectedAgentId?: string) {
 		[agentEvents, agentRoster],
 	);
 
+	const liveStateByAgentWithThinking = useMemo(() => {
+		const result: Record<string, AgentLiveState> = {};
+		for (const [agentId, state] of Object.entries(liveStateByAgent)) {
+			const thinking = agentThinking[agentId];
+			result[agentId] =
+				state.isRunning && thinking
+					? { ...state, currentTranscript: thinking }
+					: state;
+		}
+		return result;
+	}, [agentThinking, liveStateByAgent]);
+
 	useEffect(() => {
 		if (
-			!selectedAgentId
-			&& initialSelectedAgentId
-			&& agentIds.includes(initialSelectedAgentId)
+			!selectedAgentId &&
+			initialSelectedAgentId &&
+			agentIds.includes(initialSelectedAgentId)
 		) {
 			setSelectedAgentId(initialSelectedAgentId);
 		}
@@ -183,8 +193,11 @@ export function useAgentMonitor(initialSelectedAgentId?: string) {
 		}
 
 		const rosterEntry = rosterById[selectedAgentId];
-		return liveStateByAgent[selectedAgentId] ?? defaultAgentLiveState(rosterEntry);
-	}, [liveStateByAgent, rosterById, selectedAgentId]);
+		return (
+			liveStateByAgentWithThinking[selectedAgentId] ??
+			defaultAgentLiveState(rosterEntry)
+		);
+	}, [liveStateByAgentWithThinking, rosterById, selectedAgentId]);
 
 	return {
 		isConnected,
@@ -192,7 +205,7 @@ export function useAgentMonitor(initialSelectedAgentId?: string) {
 		agentIds,
 		selectedAgentId,
 		setSelectedAgentId,
-		liveStateByAgent,
+		liveStateByAgent: liveStateByAgentWithThinking,
 		selectedLiveState,
 	};
 }

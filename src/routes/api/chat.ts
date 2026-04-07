@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { RequestContext } from "@mastra/core/request-context";
 import { chatbotAgent } from "#/mastra/agents/chatbot-agent";
+import type { ChatRequestContextValues } from "#/mastra/chat-context";
 
 interface ChatRequest {
 	messages: Array<{ role: string; content: string }>;
@@ -12,37 +14,13 @@ type AgentMessage =
 
 function buildAgentMessages(
 	messages: Array<{ role: string; content: string }>,
-	sessionId?: string,
 ): AgentMessage[] {
-	const mapped: AgentMessage[] = messages.map((m) => {
+	return messages.map((m) => {
 		if (m.role === "user") {
 			return { role: "user" as const, content: m.content };
 		}
 		return { role: "assistant" as const, content: m.content };
 	});
-
-	if (sessionId) {
-		const hasSessionContext = mapped.some((m) =>
-			m.content.includes("sessionId"),
-		);
-		if (!hasSessionContext) {
-			const lastUserIdx = [...mapped]
-				.reverse()
-				.findIndex((m) => m.role === "user");
-			if (lastUserIdx !== -1) {
-				const realIdx = mapped.length - 1 - lastUserIdx;
-				const existing = mapped[realIdx];
-				if (existing.role === "user") {
-					mapped[realIdx] = {
-						role: "user",
-						content: `${existing.content}\n\n[sessionId: ${sessionId}]`,
-					};
-				}
-			}
-		}
-	}
-
-	return mapped;
 }
 
 export const Route = createFileRoute("/api/chat")({
@@ -63,13 +41,15 @@ export const Route = createFileRoute("/api/chat")({
 					});
 				}
 
-				const agentMessages = buildAgentMessages(
-					parsed.messages,
-					parsed.sessionId,
-				);
+				const agentMessages = buildAgentMessages(parsed.messages);
+				const requestContext = new RequestContext<ChatRequestContextValues>();
+				if (parsed.sessionId) {
+					requestContext.set("session-id", parsed.sessionId);
+				}
 
 				const result = await chatbotAgent.stream(agentMessages, {
 					maxSteps: 5,
+					requestContext,
 				});
 
 				const encoder = new TextEncoder();

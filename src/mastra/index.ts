@@ -6,6 +6,7 @@ import {
 	Observability,
 	SensitiveDataFilter,
 } from "@mastra/observability";
+import { createLogger } from "#/lib/logger";
 import { chatbotAgent } from "#/mastra/agents/chatbot-agent";
 import { researchAgent } from "#/mastra/agents/research-agent";
 import { tradingAgent } from "#/mastra/agents/trading-agent";

@@ -2,6 +2,7 @@ import type { OHLCVBar, LOBSnapshot, Trade } from "./market";
 import type { ResearchNote } from "./research";
 import type {
 	AgentEvent,
+	AgentThinkingDelta,
 	SimulationSessionStatus,
 	SimRuntimeStateData,
 } from "./sim";
@@ -15,6 +16,7 @@ export enum WsMessageType {
 	LobUpdate = "lob:update",
 	TradeUpdate = "trade:update",
 	AgentSignal = "agent:signal",
+	AgentThinking = "agent:thinking",
 	ResearchPublished = "research:published",
 	SimState = "sim:state",
 	SessionStatusChanged = "session:status",
@@ -34,6 +36,7 @@ export type WsChannel =
 	| `lob:${string}:${string}` // per-session, per-symbol order book
 	| `trades:${string}:${string}` // per-session, per-symbol trades
 	| `agents:${string}` // per-session agent signal feed
+	| `thinking:${string}` // per-session agent thinking stream
 	| `research:${string}` // per-session research note feed
 	| `sim:${string}` // per-session sim state + controls
 	| "world_events"; // world event notifications
@@ -68,6 +71,12 @@ export interface AgentSignalMessage {
 	type: WsMessageType.AgentSignal;
 	channel: `agents:${string}`;
 	data: AgentEvent;
+}
+
+export interface AgentThinkingMessage {
+	type: WsMessageType.AgentThinking;
+	channel: `thinking:${string}`;
+	data: AgentThinkingDelta;
 }
 
 export interface ResearchPublishedMessage {
@@ -129,6 +138,7 @@ export type WsServerMessage =
 	| LobUpdateMessage
 	| TradeUpdateMessage
 	| AgentSignalMessage
+	| AgentThinkingMessage
 	| ResearchPublishedMessage
 	| SimStateMessage
 	| SessionStatusChangedMessage
@@ -141,7 +151,12 @@ export type WsClientMessage =
 
 export type WsMessage = WsServerMessage | WsClientMessage;
 
-type SessionChannelKind = "watchlist" | "agents" | "research" | "sim";
+type SessionChannelKind =
+	| "watchlist"
+	| "agents"
+	| "thinking"
+	| "research"
+	| "sim";
 type SymbolChannelKind = "ohlcv" | "lob" | "trades";
 
 export type ParsedWsChannel =
@@ -178,6 +193,7 @@ export function parseWsChannel(channel: string): ParsedWsChannel | null {
 	if (
 		(kind === "watchlist" ||
 			kind === "agents" ||
+			kind === "thinking" ||
 			kind === "research" ||
 			kind === "sim") &&
 		isNonEmptySegment(sessionId) &&

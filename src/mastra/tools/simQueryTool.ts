@@ -3,9 +3,13 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "#/db/index";
 import { agents, orders, simConfig, ticks, trades } from "#/db/schema";
+import {
+	resolveChatSessionId,
+	type ChatRequestContextValues,
+} from "#/mastra/chat-context";
 
 const simQueryInputSchema = z.object({
-	sessionId: z.string().min(1),
+	sessionId: z.string().min(1).optional(),
 	query: z.enum([
 		"agent_rankings",
 		"recent_trades",
@@ -27,15 +31,22 @@ const simQueryOutputSchema = z.object({
 export const simQueryTool = createTool<
 	"sim-query",
 	typeof simQueryInputSchema,
-	typeof simQueryOutputSchema
+	typeof simQueryOutputSchema,
+	undefined,
+	undefined,
+	ChatRequestContextValues
 >({
 	id: "sim-query",
 	description:
 		"Query simulation state: agent performance rankings, recent trades, price history, agent decisions with LLM reasoning, and simulation status. All queries are read-only.",
 	inputSchema: simQueryInputSchema,
 	outputSchema: simQueryOutputSchema,
-	execute: async (input) => {
-		const { sessionId, query } = input;
+	execute: async (input, context) => {
+		const sessionId = resolveChatSessionId({
+			sessionId: input.sessionId,
+			requestContext: context?.requestContext,
+		});
+		const { query } = input;
 		const limit = input.limit ?? 10;
 
 		switch (query) {

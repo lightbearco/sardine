@@ -1,4 +1,4 @@
-import type Decimal from "decimal.js";
+import Decimal from "decimal.js";
 import { nanoid } from "nanoid";
 import type {
 	LOBSnapshot,
@@ -82,6 +82,12 @@ export class LimitOrderBook {
 					price: fillPrice,
 					qty: fillQty,
 					tick,
+					buyOrderState: this.snapshotOrder(
+						order.side === "buy" ? order : frontOrder,
+					),
+					sellOrderState: this.snapshotOrder(
+						order.side === "sell" ? order : frontOrder,
+					),
 				});
 
 				this.lastPrice = fillPrice;
@@ -223,6 +229,8 @@ export class LimitOrderBook {
 				price: fillPrice,
 				qty: fillQty,
 				tick,
+				buyOrderState: this.snapshotOrder(bidOrder),
+				sellOrderState: this.snapshotOrder(askOrder),
 			});
 
 			this.lastPrice = fillPrice;
@@ -254,7 +262,83 @@ export class LimitOrderBook {
 		return this.asks.length;
 	}
 
+	getLastPrice(): Decimal | null {
+		return this.lastPrice;
+	}
+
+	replaceBook(
+		input: {
+			bids: Array<{ price: Decimal; qty: number; orderCount: number }>;
+			asks: Array<{ price: Decimal; qty: number; orderCount: number }>;
+			lastPrice: Decimal | null;
+			tick: number;
+			orderIdPrefix?: string;
+			agentId?: string;
+		},
+	): Order[] {
+		this.bids = [];
+		this.asks = [];
+		this.orderIndex.clear();
+		this.lastPrice = input.lastPrice;
+
+		const prefix = input.orderIdPrefix ?? `rehydrated:${this.symbol}`;
+		const hydratedOrders = [
+			...this.hydrateLevels("buy", input.bids, input.tick, prefix, input.agentId),
+			...this.hydrateLevels("sell", input.asks, input.tick, prefix, input.agentId),
+		];
+		return hydratedOrders;
+	}
+
 	// --- Private helpers ---
+
+	private hydrateLevels(
+		side: OrderSide,
+		levels: Array<{ price: Decimal; qty: number; orderCount: number }>,
+		tick: number,
+		prefix: string,
+		agentId?: string,
+	): Order[] {
+		const hydratedOrders: Order[] = [];
+		for (const [levelIndex, level] of levels.entries()) {
+			if (level.qty <= 0) {
+				continue;
+			}
+
+			const orderCount = Math.max(
+				1,
+				Math.min(level.orderCount || 1, Math.max(1, Math.floor(level.qty))),
+			);
+			const baseQty = Math.floor(level.qty / orderCount);
+			let remainder = level.qty - baseQty * orderCount;
+
+			for (let orderIndex = 0; orderIndex < orderCount; orderIndex += 1) {
+				const qty = baseQty + (remainder > 0 ? 1 : 0);
+				remainder = Math.max(0, remainder - 1);
+				if (qty <= 0) {
+					continue;
+				}
+
+				const order: Order = {
+					id: `${prefix}:${side}:${levelIndex}:${orderIndex}`,
+					symbol: this.symbol,
+					side,
+					type: "limit",
+					price:
+						level.price instanceof Decimal
+							? level.price
+							: new Decimal(level.price),
+					qty,
+					filledQty: 0,
+					status: "open",
+					agentId: agentId ?? `${prefix}:synthetic`,
+					createdAtTick: tick,
+				};
+				this.insertOrder(order);
+				hydratedOrders.push(order);
+			}
+		}
+		return hydratedOrders;
+	}
 
 	private isCrossing(order: Order, oppositeSide: PriceLevelEntry[]): boolean {
 		if (oppositeSide.length === 0) return false;
@@ -321,5 +405,12 @@ export class LimitOrderBook {
 			});
 		}
 		return result;
+	}
+
+	private snapshotOrder(order: Order): Order {
+		return {
+			...order,
+			price: new Decimal(order.price),
+		};
 	}
 }

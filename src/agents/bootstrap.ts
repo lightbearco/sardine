@@ -11,11 +11,21 @@ import type { BootstrapMarketData } from "#/alpaca/live-feed";
 import { db } from "#/db/index";
 import { createLogger } from "#/lib/logger";
 import {
+	BOOTSTRAP_BAR_TICK,
+	DEFAULT_SESSION_SEED_PRICE,
+	DEFAULT_SESSION_SEED_QTY,
+	DEFAULT_SESSION_SEED_SPREAD,
+	buildSeedSymbolHydration,
+	buildSyntheticBarData,
+	resolveSessionReferencePrice,
+} from "#/lib/session-market-seed";
+import {
 	agents as agentsTable,
 	orderBookSnapshots as orderBookSnapshotsTable,
 	simConfig as simConfigTable,
 	ticks as ticksTable,
 } from "#/db/schema";
+import { TIER_DELAYS } from "#/engine/bus/PublicationBus";
 import { MatchingEngine } from "#/engine/lob/MatchingEngine";
 import { SimClock } from "#/engine/sim/SimClock";
 import { DEV_TICKERS, type Sector } from "#/lib/constants";
@@ -31,7 +41,8 @@ export type { ResearchAgentWorker } from "#/agents/factory";
 
 const log = createLogger("Bootstrap");
 
-const DEFAULT_SEED_PRICE = new Decimal(150);
+const SEEDED_BOOK_DEPTH = 1;
+const SEEDED_BOOK_QTY = DEFAULT_SESSION_SEED_QTY;
 
 type SeededRandom = ReturnType<typeof createSeededRandom>;
 
@@ -84,6 +95,7 @@ export interface RestoreSimulationInput {
 			positions: PersistedPositionRecord | null;
 			realizedPnl: Record<string, number> | null;
 			lastAutopilotDirective: AutopilotDirective | null;
+			lastLlmTick: number | null;
 			llmGroup: number;
 		}>;
 		openOrders: Array<{
@@ -98,6 +110,13 @@ export interface RestoreSimulationInput {
 			quantity: number;
 			filledQuantity: number;
 			llmReasoning: string | null;
+		}>;
+		snapshots: Array<{
+			symbol: string;
+			tick: number;
+			bids: Array<{ price: number; qty: number; orderCount: number }>;
+			asks: Array<{ price: number; qty: number; orderCount: number }>;
+			lastPrice: number | null;
 		}>;
 		researchNotes: ResearchNote[];
 		agentEventCount: number;
@@ -330,44 +349,245 @@ function resolveSeedMidPrice(
 	marketData?: BootstrapMarketData | null,
 ): Decimal {
 	const quote = marketData?.symbols[symbol];
-	return new Decimal(quote?.midPrice ?? quote?.lastPrice ?? DEFAULT_SEED_PRICE);
-}
-
-function resolveHistoricalTick(
-	symbols: string[],
-	marketData?: BootstrapMarketData | null,
-): number {
-	return Math.max(
-		0,
-		...symbols.map((symbol) => marketData?.symbols[symbol]?.bars.length ?? 0),
+	return new Decimal(
+		quote?.midPrice ?? quote?.lastPrice ?? DEFAULT_SESSION_SEED_PRICE,
 	);
 }
 
-function buildBootstrapBars(input: {
-	sessionId: string;
-	symbols: string[];
-	historicalTickCount: number;
-	marketData?: BootstrapMarketData | null;
-}) {
-	if (!input.marketData || input.historicalTickCount === 0) {
-		return [];
+function resolveSeedLastPrice(
+	symbol: string,
+	marketData?: BootstrapMarketData | null,
+): Decimal {
+	const quote = marketData?.symbols[symbol];
+	return new Decimal(
+		quote?.lastPrice ??
+			quote?.midPrice ??
+			quote?.bidPrice ??
+			DEFAULT_SESSION_SEED_PRICE,
+	);
+}
+
+function resolveSeedSpread(
+	symbol: string,
+	marketData?: BootstrapMarketData | null,
+): Decimal {
+	const quote = marketData?.symbols[symbol];
+	const spread =
+		quote?.spread ??
+		(quote?.bidPrice !== undefined &&
+		quote?.bidPrice !== null &&
+		quote?.askPrice !== undefined &&
+		quote?.askPrice !== null
+			? quote.askPrice - quote.bidPrice
+			: null);
+
+	if (spread === null || spread <= 0) {
+		return new Decimal(DEFAULT_SESSION_SEED_SPREAD);
 	}
 
-	return input.symbols.flatMap((symbol) => {
-		const bars = input.marketData?.symbols[symbol]?.bars ?? [];
-		const offset = input.historicalTickCount - bars.length;
+	return new Decimal(spread);
+}
 
-		return bars.map((bar, index) => ({
-			sessionId: input.sessionId,
-			tick: offset + index + 1,
+function resolveSeedVolume(
+	symbol: string,
+	marketData?: BootstrapMarketData | null,
+): number {
+	const quote = marketData?.symbols[symbol];
+	return quote?.trades[0]?.size ?? quote?.bars.at(-1)?.volume ?? 0;
+}
+
+function seedMatchingEngineBooks(input: {
+	matchingEngine: MatchingEngine;
+	symbols: string[];
+	sessionId: string;
+	tick: number;
+	marketData?: BootstrapMarketData | null;
+}): void {
+	for (const symbol of input.symbols) {
+		const midPrice = resolveSeedMidPrice(symbol, input.marketData);
+		input.matchingEngine.seedBook(
 			symbol,
-			open: bar.open,
-			high: bar.high,
-			low: bar.low,
-			close: bar.close,
-			volume: bar.volume,
-		}));
+			midPrice,
+			resolveSeedSpread(symbol, input.marketData),
+			SEEDED_BOOK_DEPTH,
+			SEEDED_BOOK_QTY,
+			input.tick,
+			namespacedId(input.sessionId, "market-maker-seed"),
+		);
+		input.matchingEngine.hydrateSnapshot(symbol, {
+			bids: input.matchingEngine
+				.getSnapshot(symbol, SEEDED_BOOK_DEPTH)
+				.bids.map((level) => ({
+					price: level.price.toNumber(),
+					qty: level.qty,
+					orderCount: level.orderCount,
+				})),
+			asks: input.matchingEngine
+				.getSnapshot(symbol, SEEDED_BOOK_DEPTH)
+				.asks.map((level) => ({
+					price: level.price.toNumber(),
+					qty: level.qty,
+					orderCount: level.orderCount,
+				})),
+			lastPrice: resolveSeedLastPrice(symbol, input.marketData).toNumber(),
+			tick: input.tick,
+			orderIdPrefix: `${input.sessionId}:seed:${symbol}`,
+			agentId: namespacedId(input.sessionId, "market-maker-seed"),
+		});
+	}
+}
+
+function buildBootstrapSeedBars(input: {
+	sessionId: string;
+	symbols: string[];
+	marketData?: BootstrapMarketData | null;
+}) {
+	return input.symbols.map((symbol) => {
+		const close = resolveSeedLastPrice(symbol, input.marketData).toNumber();
+		const volume = resolveSeedVolume(symbol, input.marketData);
+
+		return {
+			sessionId: input.sessionId,
+			...buildSyntheticBarData({
+				symbol,
+				lastPrice: close,
+				tick: BOOTSTRAP_BAR_TICK,
+				volume,
+			}),
+		};
 	});
+}
+
+function groupOpenOrdersBySymbol(
+	openOrders: RestoreSimulationInput["persistedState"]["openOrders"],
+): Map<string, RestoreSimulationInput["persistedState"]["openOrders"]> {
+	const grouped = new Map<
+		string,
+		RestoreSimulationInput["persistedState"]["openOrders"]
+	>();
+
+	for (const order of openOrders) {
+		const rows = grouped.get(order.symbol) ?? [];
+		rows.push(order);
+		grouped.set(order.symbol, rows);
+	}
+
+	return grouped;
+}
+
+function resolveRestoreFallbackPrice(input: {
+	symbol: string;
+	snapshot?:
+		| RestoreSimulationInput["persistedState"]["snapshots"][number]
+		| undefined;
+	openOrders: RestoreSimulationInput["persistedState"]["openOrders"];
+}): number {
+	const bidPrices = input.openOrders
+		.filter((order) => order.side === "buy" && order.price !== null)
+		.map((order) => order.price!);
+	const askPrices = input.openOrders
+		.filter((order) => order.side === "sell" && order.price !== null)
+		.map((order) => order.price!);
+
+	return resolveSessionReferencePrice({
+		snapshot: input.snapshot
+			? {
+					lastPrice: input.snapshot.lastPrice,
+					bids: input.snapshot.bids,
+					asks: input.snapshot.asks,
+				}
+			: undefined,
+		bar:
+			bidPrices.length > 0 && askPrices.length > 0
+				? {
+						open: Math.max(...bidPrices),
+						close: Math.min(...askPrices),
+					}
+				: bidPrices.length > 0
+					? { open: bidPrices[0]!, close: bidPrices[0]! }
+					: askPrices.length > 0
+						? { open: askPrices[0]!, close: askPrices[0]! }
+						: undefined,
+		fallbackPrice: DEFAULT_SESSION_SEED_PRICE,
+	});
+}
+
+function buildOpenOrderLevelUsage(
+	openOrders: RestoreSimulationInput["persistedState"]["openOrders"],
+): Map<string, { qty: number; orderCount: number }> {
+	const usage = new Map<string, { qty: number; orderCount: number }>();
+
+	for (const order of openOrders) {
+		if (order.type !== "limit" || order.price === null) {
+			continue;
+		}
+
+		const remainingQty = Math.max(0, order.quantity - order.filledQuantity);
+		if (remainingQty <= 0) {
+			continue;
+		}
+
+		const key = [order.symbol, order.side, order.price.toFixed(6)].join(":");
+		const existing = usage.get(key) ?? { qty: 0, orderCount: 0 };
+		existing.qty += remainingQty;
+		existing.orderCount += 1;
+		usage.set(key, existing);
+	}
+
+	return usage;
+}
+
+function subtractLevelUsage(
+	symbol: string,
+	side: "buy" | "sell",
+	levels: Array<{ price: number; qty: number; orderCount: number }>,
+	usage: Map<string, { qty: number; orderCount: number }>,
+): Array<{ price: number; qty: number; orderCount: number }> {
+	return levels.flatMap((level) => {
+		const key = [symbol, side, level.price.toFixed(6)].join(":");
+		const consumed = usage.get(key);
+		if (!consumed) {
+			return [level];
+		}
+
+		const remainingQty = Math.max(0, level.qty - consumed.qty);
+		const remainingOrderCount = Math.max(0, level.orderCount - consumed.orderCount);
+		if (remainingQty <= 0) {
+			return [];
+		}
+
+		return [
+			{
+				price: level.price,
+				qty: remainingQty,
+				orderCount: Math.max(1, remainingOrderCount),
+			},
+		];
+	});
+}
+
+function hydrateResearchInboxes(
+	agentRegistry: AgentRegistry,
+	researchNotes: ResearchNote[],
+	simTick: number,
+): void {
+	for (const entry of agentRegistry.getAll()) {
+		const tier = entry.state.tier;
+		if (tier !== "tier1" && tier !== "tier2" && tier !== "tier3") {
+			continue;
+		}
+
+		const releasedNotes = researchNotes
+			.filter((note) => simTick >= note.publishedAtTick + TIER_DELAYS[tier])
+			.sort((left, right) => right.publishedAtTick - left.publishedAtTick);
+
+		for (const note of releasedNotes) {
+			entry.state.researchInbox.set(note.id, {
+				...note,
+				releasedToTier: tier,
+			});
+		}
+	}
 }
 
 function selectPortfolioSymbols(input: {
@@ -465,7 +685,8 @@ function buildAutopilotDirective(input: {
 
 	const standingOrders = selectedSymbols.slice(0, 2).map((symbol) => {
 		const referencePrice =
-			input.priceBySymbol.get(symbol) ?? DEFAULT_SEED_PRICE;
+			input.priceBySymbol.get(symbol) ??
+			new Decimal(DEFAULT_SESSION_SEED_PRICE);
 		const price =
 			side === "buy"
 				? referencePrice.mul("0.9985")
@@ -485,7 +706,8 @@ function buildAutopilotDirective(input: {
 	for (const symbol of heldSymbols.slice(0, 2)) {
 		if (sideSymbols.has(symbol)) continue;
 		const referencePrice =
-			input.priceBySymbol.get(symbol) ?? DEFAULT_SEED_PRICE;
+			input.priceBySymbol.get(symbol) ??
+			new Decimal(DEFAULT_SESSION_SEED_PRICE);
 		standingOrders.push({
 			symbol,
 			side: "sell",
@@ -616,11 +838,14 @@ export async function bootstrapSimulation(
 ): Promise<BootstrapSimulationResult> {
 	const matchingEngine = new MatchingEngine();
 	matchingEngine.initialize(input.symbols);
+	seedMatchingEngineBooks({
+		matchingEngine,
+		symbols: input.symbols,
+		sessionId: input.sessionId,
+		tick: BOOTSTRAP_BAR_TICK,
+		marketData: input.marketData,
+	});
 
-	const historicalTickCount = resolveHistoricalTick(
-		input.symbols,
-		input.marketData,
-	);
 	const { agentRegistry, researchWorkers, seedAgentId } = buildSimulationActors(
 		{
 			sessionId: input.sessionId,
@@ -666,17 +891,16 @@ export async function bootstrapSimulation(
 		serializeOrderBookSnapshot({
 			sessionId: input.sessionId,
 			snapshot: matchingEngine.getSnapshot(symbol),
-			tick: historicalTickCount,
+			tick: BOOTSTRAP_BAR_TICK,
 		}),
 	);
-	const bootstrapBars = buildBootstrapBars({
+	const bootstrapBars = buildBootstrapSeedBars({
 		sessionId: input.sessionId,
 		symbols: input.symbols,
-		historicalTickCount,
 		marketData: input.marketData,
 	});
 	const initialSimulatedTime = new SimClock(input.simulatedTickDuration, {
-		initialTick: historicalTickCount,
+		initialTick: BOOTSTRAP_BAR_TICK,
 	}).simulatedTime;
 
 	await db.transaction(async (tx) => {
@@ -709,7 +933,7 @@ export async function bootstrapSimulation(
 		await tx.insert(simConfigTable).values({
 			sessionId: input.sessionId,
 			isRunning: false,
-			currentTick: historicalTickCount,
+			currentTick: BOOTSTRAP_BAR_TICK,
 			simulatedMarketTime: initialSimulatedTime,
 			speedMultiplier: 1,
 			tickIntervalMs: input.tickIntervalMs,
@@ -721,7 +945,7 @@ export async function bootstrapSimulation(
 	return {
 		sessionId: input.sessionId,
 		symbols: input.symbols,
-		initialTick: historicalTickCount,
+		initialTick: BOOTSTRAP_BAR_TICK,
 		matchingEngine,
 		agentRegistry,
 		researchWorkers,
@@ -733,6 +957,7 @@ export function restoreSimulation(
 ): RestoreSimulationResult {
 	const matchingEngine = new MatchingEngine();
 	matchingEngine.initialize(input.symbols);
+	const currentTick = input.persistedState.simConfig.currentTick;
 
 	const { agentRegistry, researchWorkers } = buildSimulationActors({
 		sessionId: input.sessionId,
@@ -763,6 +988,65 @@ export function restoreSimulation(
 			realizedPnl: deserializeRealizedPnl(persisted.realizedPnl),
 			lastAutopilotDirective:
 				persisted.lastAutopilotDirective ?? entry.state.lastAutopilotDirective,
+			lastLlmTick: persisted.lastLlmTick,
+		});
+	}
+
+	const openOrdersBySymbol = groupOpenOrdersBySymbol(
+		input.persistedState.openOrders,
+	);
+	const persistedSnapshotsBySymbol = new Map(
+		input.persistedState.snapshots.map((snapshot) => [snapshot.symbol, snapshot]),
+	);
+	const openOrderLevelUsage = buildOpenOrderLevelUsage(
+		input.persistedState.openOrders,
+	);
+
+	for (const symbol of input.symbols) {
+		const snapshot = persistedSnapshotsBySymbol.get(symbol);
+		const symbolOpenOrders = openOrdersBySymbol.get(symbol) ?? [];
+		const fallbackPrice = resolveRestoreFallbackPrice({
+			symbol,
+			snapshot,
+			openOrders: symbolOpenOrders,
+		});
+
+		if (snapshot) {
+			matchingEngine.hydrateSnapshot(symbol, {
+				bids: subtractLevelUsage(
+					symbol,
+					"buy",
+					snapshot.bids,
+					openOrderLevelUsage,
+				),
+				asks: subtractLevelUsage(
+					symbol,
+					"sell",
+					snapshot.asks,
+					openOrderLevelUsage,
+				),
+				lastPrice: snapshot.lastPrice ?? fallbackPrice,
+				tick: snapshot.tick,
+				orderIdPrefix: `${input.sessionId}:restored:${symbol}`,
+				agentId: namespacedId(input.sessionId, "market-maker-seed"),
+			});
+			continue;
+		}
+
+		const fallback = buildSeedSymbolHydration({
+			symbol,
+			tick: currentTick,
+			fallbackPrice,
+			includeDepth: symbolOpenOrders.length === 0,
+		});
+
+		matchingEngine.hydrateSnapshot(symbol, {
+			bids: fallback.snapshot.bids,
+			asks: fallback.snapshot.asks,
+			lastPrice: fallback.snapshot.lastPrice,
+			tick: fallback.lastBar.tick,
+			orderIdPrefix: `${input.sessionId}:restored:${symbol}`,
+			agentId: namespacedId(input.sessionId, "market-maker-seed"),
 		});
 	}
 
@@ -801,17 +1085,22 @@ export function restoreSimulation(
 				openOrdersByAgentId.get(entry.config.id) ?? new Map<string, Order>(),
 		});
 	}
+	hydrateResearchInboxes(
+		agentRegistry,
+		input.persistedState.researchNotes,
+		currentTick,
+	);
 
 	return {
 		sessionId: input.sessionId,
 		symbols: input.symbols,
-		initialTick: input.persistedState.simConfig.currentTick,
+		initialTick: currentTick,
 		matchingEngine,
 		agentRegistry,
 		researchWorkers,
 		runtimeState: {
 			isRunning: input.persistedState.simConfig.isRunning,
-			currentTick: input.persistedState.simConfig.currentTick,
+			currentTick,
 			simulatedMarketTime: input.persistedState.simConfig.simulatedMarketTime,
 			speedMultiplier: input.persistedState.simConfig.speedMultiplier,
 			tickIntervalMs: input.persistedState.simConfig.tickIntervalMs,

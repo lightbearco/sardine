@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import Decimal from "decimal.js";
 import { spawnResearchAgents } from "#/agents/factory";
 import { EventBus } from "#/engine/bus/EventBus";
 import { PublicationBus } from "#/engine/bus/PublicationBus";
@@ -17,7 +16,7 @@ describe("sim-runner research scheduling", () => {
 		vi.clearAllMocks();
 	});
 
-	it("only runs research on ticks divisible by the configured frequency", async () => {
+	it("runs research on tick one and then on ticks divisible by the configured frequency", async () => {
 		const { runResearchCycle, shouldRunResearchCycle } = await import(
 			"../sim-runner"
 		);
@@ -29,10 +28,22 @@ describe("sim-runner research scheduling", () => {
 			},
 		});
 
+		expect(shouldRunResearchCycle(1)).toBe(true);
 		expect(shouldRunResearchCycle(19)).toBe(false);
 		expect(shouldRunResearchCycle(20)).toBe(true);
+		expect(shouldRunResearchCycle(1, 10)).toBe(true);
 		expect(shouldRunResearchCycle(9, 10)).toBe(false);
 		expect(shouldRunResearchCycle(10, 10)).toBe(true);
+
+		await runResearchCycle(
+			workers,
+			1,
+			new PublicationBus(),
+			new EventBus(),
+			"test-session",
+			{ generate },
+		);
+		expect(generate).toHaveBeenCalledTimes(3);
 
 		await runResearchCycle(
 			workers,
@@ -42,7 +53,7 @@ describe("sim-runner research scheduling", () => {
 			"test-session",
 			{ generate },
 		);
-		expect(generate).not.toHaveBeenCalled();
+		expect(generate).toHaveBeenCalledTimes(3);
 
 		await runResearchCycle(
 			workers,
@@ -52,7 +63,7 @@ describe("sim-runner research scheduling", () => {
 			"test-session",
 			{ generate },
 		);
-		expect(generate).toHaveBeenCalledTimes(3);
+		expect(generate).toHaveBeenCalledTimes(6);
 	}, 10000);
 
 	it("continues the cycle when one research worker fails", async () => {
@@ -81,38 +92,7 @@ describe("sim-runner research scheduling", () => {
 		expect(generate).toHaveBeenCalledTimes(3);
 	});
 
-	it.skip("builds divergence rows from sim and real prices", async () => {
-		const { buildDivergenceRows } = await import("../sim-runner");
-
-		const rows = buildDivergenceRows({
-			sessionId: "test-session",
-			tick: 61,
-			referencePrices: new Map([
-				["AAPL", new Decimal(110)],
-				["MSFT", new Decimal(95)],
-			]),
-			quotes: new Map([
-				[
-					"AAPL",
-					{ lastPrice: 100, midPrice: null, bidPrice: null, askPrice: null },
-				],
-				[
-					"MSFT",
-					{ lastPrice: null, midPrice: null, bidPrice: null, askPrice: null },
-				],
-			]),
-		});
-
-		expect(rows).toEqual([
-			{
-				tick: 61,
-				symbol: "AAPL",
-				simPrice: 110,
-				realPrice: 100,
-				divergencePct: 10,
-			},
-		]);
-	});
+	it.skip("tracks divergence rows when that feature is reintroduced", () => {});
 
 	it("defaults the live session cap to two and sanitizes invalid values", async () => {
 		const { getMaxLiveSessions } = await import("../sim-runner");

@@ -97,4 +97,24 @@ describe("EventBus", () => {
 		expect(signalListener).toHaveBeenCalledOnce();
 		expect(simStateListener).toHaveBeenCalledOnce();
 	});
+
+	it("delivers agent-thinking events separately from agent-event", () => {
+		const bus = new EventBus();
+		const agentEventListener = vi.fn();
+		const thinkingListener = vi.fn();
+
+		bus.on("agent-event", agentEventListener);
+		bus.on("agent-thinking", thinkingListener);
+
+		bus.emit("agent-thinking", {
+			agentId: "agent-1",
+			agentName: "Agent 1",
+			tick: 2,
+			delta: "Thinking...",
+			transcript: "Thinking...",
+		});
+
+		expect(thinkingListener).toHaveBeenCalledOnce();
+		expect(agentEventListener).not.toHaveBeenCalled();
+	});
 });

@@ -518,6 +518,76 @@ describe("SimOrchestrator", () => {
 		expect(orchestrator.getState().lastSummary?.tradeCount).toBe(1);
 	});
 
+	it("persists hydrated resting orders before trades that reference them", async () => {
+		const registry = new AgentRegistry();
+		registerAgent(registry, "seller-agent", {
+			config: { llmGroup: 1, tier: "tier1" },
+		});
+
+		const engine = new MatchingEngine();
+		engine.initialize(["AAPL"]);
+		engine.hydrateSnapshot("AAPL", {
+			bids: [{ price: 100, qty: 10, orderCount: 1 }],
+			asks: [],
+			lastPrice: 100,
+			tick: 0,
+			orderIdPrefix: "seed-book:AAPL",
+			agentId: "seed-liquidity",
+		});
+
+		const { db, state } = createDbDouble();
+		const orchestrator = new SimOrchestrator(
+			engine,
+			registry,
+			new SimClock(5),
+			new PublicationBus(),
+			new EventBus(),
+			db as never,
+			createTradingAgentDouble({
+				"seller-agent": async () => ({
+					object: {
+						reasoning: "Sell into the bid.",
+						ordersPlaced: [
+							{
+								orderId: "sell-1",
+								symbol: "AAPL",
+								side: "sell",
+								type: "market",
+								qty: 5,
+								price: "0",
+								status: "pending",
+								filledQty: 0,
+								trades: [],
+							},
+						],
+						autopilotDirective: {
+							standingOrders: [],
+							holdPositions: [],
+						},
+					},
+				}),
+			}),
+			{ llmConcurrency: 1, groupCount: 2 },
+		);
+
+		const summary = await orchestrator.step();
+
+		expect(summary.tradeCount).toBe(1);
+		expect(state.insertedTrades).toHaveLength(1);
+		expect(state.insertedOrders).toHaveLength(2);
+		expect(state.insertedOrders.some((row) => row.id === "sell-1")).toBe(true);
+		expect(
+			state.insertedOrders.some(
+				(row) =>
+					typeof row.id === "string" &&
+					row.id.startsWith("seed-book:AAPL:buy:0:0"),
+			),
+		).toBe(true);
+		expect(
+			state.insertedTrades[0]?.buyOrderId,
+		).toBe("seed-book:AAPL:buy:0:0");
+	});
+
 	it("persists start/stop state and exposes current runtime state", async () => {
 		const registry = new AgentRegistry();
 		const engine = new MatchingEngine();

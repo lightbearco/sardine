@@ -11,6 +11,7 @@ import { ResearchFeed } from "#/components/dashboard/ResearchFeed";
 import { TimeAndSales } from "#/components/dashboard/TimeAndSales";
 import { TopBar } from "#/components/dashboard/TopBar";
 import { Watchlist } from "#/components/dashboard/Watchlist";
+import { ChatPanelProvider } from "#/hooks/useChatPanel";
 import {
 	MaximizedPanelProvider,
 	useMaximizedPanel,
@@ -137,46 +138,50 @@ function DashboardSessionRoute() {
 	if (isPending) {
 		return (
 			<SessionDashboardProvider value={providerValue}>
-				<main
-					className="terminal bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
-					style={{ height: "calc(100vh)" }}
-				>
-					<div className="flex h-full flex-col px-3 pt-3 pb-3 gap-2">
-						<div className="shrink-0">
-							<TopBar />
-						</div>
-						<div className="flex min-h-0 flex-1 items-center justify-center">
-							<div className="rounded-2xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)] px-8 py-10 text-center max-w-md">
-								<div className="mb-4 text-lg font-semibold text-[var(--terminal-text)]">
-									{hydratedData.session.name}
-								</div>
-								<div className="mb-2 text-sm text-[var(--terminal-text-muted)]">
-									Queued for simulation runner...
-								</div>
-								<div className="mt-6 space-y-1 text-xs text-[var(--terminal-text-muted)]">
-									<div>
-										{hydratedData.session.agentCount} agent
-										{hydratedData.session.agentCount !== 1 && "s"}
+				<ChatPanelProvider>
+					<main
+						className="terminal bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
+						style={{ height: "calc(100vh)" }}
+					>
+						<div className="flex h-full flex-col px-3 pt-3 pb-3 gap-2">
+							<div className="shrink-0">
+								<TopBar />
+							</div>
+							<div className="flex min-h-0 flex-1 items-center justify-center">
+								<div className="rounded-2xl border border-[var(--terminal-border)] bg-[var(--terminal-surface)] px-8 py-10 text-center max-w-md">
+									<div className="mb-4 text-lg font-semibold text-[var(--terminal-text)]">
+										{hydratedData.session.name}
 									</div>
-									<div>
-										{hydratedData.session.symbols.length} symbol
-										{hydratedData.session.symbols.length !== 1 && "s"}:{" "}
-										{hydratedData.session.symbols.join(", ")}
+									<div className="mb-2 text-sm text-[var(--terminal-text-muted)]">
+										Queued for simulation runner...
+									</div>
+									<div className="mt-6 space-y-1 text-xs text-[var(--terminal-text-muted)]">
+										<div>
+											{hydratedData.session.agentCount} agent
+											{hydratedData.session.agentCount !== 1 && "s"}
+										</div>
+										<div>
+											{hydratedData.session.symbols.length} symbol
+											{hydratedData.session.symbols.length !== 1 && "s"}:{" "}
+											{hydratedData.session.symbols.join(", ")}
+										</div>
 									</div>
 								</div>
 							</div>
 						</div>
-					</div>
-				</main>
+					</main>
+				</ChatPanelProvider>
 			</SessionDashboardProvider>
 		);
 	}
 
 	return (
 		<SessionDashboardProvider value={providerValue}>
-			<MaximizedPanelProvider>
-				<DashboardBody />
-			</MaximizedPanelProvider>
+			<ChatPanelProvider>
+				<MaximizedPanelProvider>
+					<DashboardBody />
+				</MaximizedPanelProvider>
+			</ChatPanelProvider>
 		</SessionDashboardProvider>
 	);
 }

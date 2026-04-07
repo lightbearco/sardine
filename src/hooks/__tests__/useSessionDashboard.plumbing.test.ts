@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { planSymbolDataHydration } from "../useSessionDashboard";
+import {
+	buildWatchlistSymbolHydration,
+	planSymbolDataHydration,
+} from "../sessionDashboard/pure";
 import type { SessionSymbolHydration } from "#/types/sim";
 
 const initialSymbolData: SessionSymbolHydration = {
@@ -129,5 +132,54 @@ describe("planSymbolDataHydration", () => {
 
 		expect(plan.mode).toBe("hydrate");
 		expect(plan.nextHydratedSymbolKey).toBe("sim-2:AAPL");
+	});
+
+	it("builds symbol fallback data directly from the watchlist entry", () => {
+		expect(
+			buildWatchlistSymbolHydration({
+				symbol: "MSFT",
+				watchlist: {
+					MSFT: {
+						lastBar: {
+							symbol: "MSFT",
+							open: 200,
+							high: 200,
+							low: 200,
+							close: 200,
+							volume: 0,
+							tick: 0,
+						},
+						snapshot: {
+							symbol: "MSFT",
+							bids: [{ price: 199.95, qty: 100, orderCount: 1 }],
+							asks: [{ price: 200.05, qty: 100, orderCount: 1 }],
+							lastPrice: 200,
+							spread: 0.1,
+						},
+					},
+				},
+			}),
+		).toEqual({
+			symbol: "MSFT",
+			bars: [
+				{
+					symbol: "MSFT",
+					open: 200,
+					high: 200,
+					low: 200,
+					close: 200,
+					volume: 0,
+					tick: 0,
+				},
+			],
+			snapshot: {
+				symbol: "MSFT",
+				bids: [{ price: 199.95, qty: 100, orderCount: 1 }],
+				asks: [{ price: 200.05, qty: 100, orderCount: 1 }],
+				lastPrice: 200,
+				spread: 0.1,
+			},
+			trades: [],
+		});
 	});
 });

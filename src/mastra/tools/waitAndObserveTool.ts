@@ -10,9 +10,13 @@ import {
 	trades,
 	worldEvents,
 } from "#/db/schema";
+import {
+	resolveChatSessionId,
+	type ChatRequestContextValues,
+} from "#/mastra/chat-context";
 
 const waitAndObserveInputSchema = z.object({
-	sessionId: z.string().min(1),
+	sessionId: z.string().min(1).optional(),
 	eventId: z.string().min(1),
 });
 
@@ -51,15 +55,22 @@ const waitAndObserveOutputSchema = z.object({
 export const waitAndObserveTool = createTool<
 	"wait-and-observe",
 	typeof waitAndObserveInputSchema,
-	typeof waitAndObserveOutputSchema
+	typeof waitAndObserveOutputSchema,
+	undefined,
+	undefined,
+	ChatRequestContextValues
 >({
 	id: "wait-and-observe",
 	description:
 		"Check the current aftermath of a previously injected world event. Returns the event status, price changes for affected symbols, volume summary, and notable agent actions since the event was applied. Call repeatedly to get updated observations as more ticks elapse.",
 	inputSchema: waitAndObserveInputSchema,
 	outputSchema: waitAndObserveOutputSchema,
-	execute: async (input) => {
-		const { sessionId, eventId } = input;
+	execute: async (input, context) => {
+		const sessionId = resolveChatSessionId({
+			sessionId: input.sessionId,
+			requestContext: context?.requestContext,
+		});
+		const { eventId } = input;
 
 		const eventRows = await db
 			.select({

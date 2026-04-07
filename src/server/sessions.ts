@@ -25,6 +25,10 @@ import {
 	type CreateSimulationSessionInput,
 } from "#/lib/simulation-session";
 import { createLogger } from "#/lib/logger";
+import {
+	BOOTSTRAP_BAR_TICK,
+	buildSeedSymbolHydration,
+} from "#/lib/session-market-seed";
 import type {
 	LOBSnapshot,
 	LOBSnapshotData,
@@ -84,6 +88,26 @@ function toSnapshot(
 		asks: levels(row.asks),
 		lastPrice: row.lastPrice ?? null,
 		spread: row.spread ?? null,
+	};
+}
+
+function buildFallbackWatchlistEntry(input: {
+	symbol: string;
+	lastBar?: OHLCVBarData | null;
+	snapshotRow?: typeof orderBookSnapshots.$inferSelect | null;
+}): SessionWatchlistEntry {
+	const snapshot = input.snapshotRow ? toSnapshot(input.snapshotRow) : null;
+	const fallback = buildSeedSymbolHydration({
+		symbol: input.symbol,
+		lastBar: input.lastBar,
+		snapshot,
+		tick: input.snapshotRow?.tick ?? BOOTSTRAP_BAR_TICK,
+		volume: input.lastBar?.volume ?? 0,
+	});
+
+	return {
+		lastBar: fallback.lastBar,
+		snapshot: fallback.snapshot,
 	};
 }
 
@@ -542,8 +566,8 @@ export async function getSessionDashboardHydration(input: {
 		),
 	);
 
-	const snapshotBySymbol = new Map(
-		snapshotRows.map((row) => [row.symbol, toSnapshot(row)]),
+	const snapshotRowBySymbol = new Map(
+		snapshotRows.map((row) => [row.symbol, row]),
 	);
 
 	const divergenceBySymbol = new Map(
@@ -554,8 +578,11 @@ export async function getSessionDashboardHydration(input: {
 		supportedSymbols.map((symbol) => [
 			symbol,
 			{
-				lastBar: latestBarBySymbol.get(symbol) ?? null,
-				snapshot: snapshotBySymbol.get(symbol) ?? null,
+				...buildFallbackWatchlistEntry({
+					symbol,
+					lastBar: latestBarBySymbol.get(symbol) ?? null,
+					snapshotRow: snapshotRowBySymbol.get(symbol) ?? null,
+				}),
 				divergencePct: divergenceBySymbol.get(symbol) ?? null,
 			},
 		]),
@@ -648,10 +675,20 @@ export async function getSessionSymbolHydration(input: {
 			.limit(1),
 	]);
 
+	const latestBar = barRows[0] ? toBar(barRows[0]) : null;
+	const latestSnapshotRow = snapshotRows[0] ?? null;
+	const fallback = buildSeedSymbolHydration({
+		symbol: resolvedSymbol,
+		lastBar: latestBar,
+		snapshot: latestSnapshotRow ? toSnapshot(latestSnapshotRow) : null,
+		tick: latestSnapshotRow?.tick ?? latestBar?.tick ?? BOOTSTRAP_BAR_TICK,
+		volume: latestBar?.volume ?? 0,
+	});
+
 	return {
 		symbol: resolvedSymbol,
-		bars: barRows.map(toBar).reverse(),
-		snapshot: snapshotRows[0] ? toSnapshot(snapshotRows[0]) : null,
+		bars: barRows.length > 0 ? barRows.map(toBar).reverse() : [fallback.lastBar],
+		snapshot: latestSnapshotRow ? toSnapshot(latestSnapshotRow) : fallback.snapshot,
 		trades: tradeRows.map(toTrade),
 	};
 }

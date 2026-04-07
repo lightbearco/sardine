@@ -306,4 +306,142 @@ describe("getSessionDashboardHydration", () => {
 		expect(symbolHydration?.bars).toHaveLength(1);
 		expect(symbolHydration?.trades).toHaveLength(1);
 	});
+
+	it("synthesizes fallback watchlist and symbol hydration for missing legacy symbols", async () => {
+		queueSelectResult([
+			{
+				id: "sim_legacy",
+				name: "Legacy Simulation",
+				status: "active",
+				symbols: ["AAPL", "MSFT"],
+				seed: 42,
+				agentCount: 2,
+				groupCount: 2,
+				tickIntervalMs: 1000,
+				simulatedTickDuration: 5,
+				traderDistribution: {
+					tier1: 1,
+					hedgeFund: 0,
+					marketMaker: 0,
+					pension: 0,
+					momentum: 1,
+					value: 0,
+					noise: 0,
+					depthProvider: 0,
+				},
+				createdAt: new Date("2026-04-05T10:00:00.000Z"),
+				updatedAt: new Date("2026-04-05T10:10:00.000Z"),
+				startedAt: new Date("2026-04-05T10:00:00.000Z"),
+				endedAt: null,
+			},
+		]);
+		queueSelectResult([
+			{
+				id: 1,
+				sessionId: "sim_legacy",
+				isRunning: true,
+				currentTick: 8,
+				simulatedMarketTime: new Date("2026-04-05T10:08:00.000Z"),
+				speedMultiplier: 1,
+				tickIntervalMs: 1000,
+				lastSummary: null,
+				seed: 42,
+				createdAt: new Date("2026-04-05T10:00:00.000Z"),
+				updatedAt: new Date("2026-04-05T10:08:00.000Z"),
+			},
+		]);
+		queueSelectResult([
+			{
+				id: 1,
+				sessionId: "sim_legacy",
+				symbol: "AAPL",
+				tick: 8,
+				bids: [{ price: 150.1, qty: 10, orderCount: 1 }],
+				asks: [{ price: 150.2, qty: 10, orderCount: 1 }],
+				lastPrice: 150.15,
+				spread: 0.1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+		]);
+		queueSelectResult([]);
+		queueSelectResult([]);
+		queueSelectResult([]);
+		queueSelectResult([
+			{
+				id: 2,
+				sessionId: "sim_legacy",
+				tick: 8,
+				symbol: "AAPL",
+				open: 150,
+				high: 151,
+				low: 149,
+				close: 150.5,
+				volume: 1200,
+				createdAt: new Date(),
+			},
+		]);
+		queueSelectResult([]);
+		queueSelectResult([]);
+		queueSelectResult([
+			{
+				id: "sim_legacy",
+				name: "Legacy Simulation",
+				status: "active",
+				symbols: ["AAPL", "MSFT"],
+				seed: 42,
+				agentCount: 2,
+				groupCount: 2,
+				tickIntervalMs: 1000,
+				simulatedTickDuration: 5,
+				traderDistribution: {
+					tier1: 1,
+					hedgeFund: 0,
+					marketMaker: 0,
+					pension: 0,
+					momentum: 1,
+					value: 0,
+					noise: 0,
+					depthProvider: 0,
+				},
+				createdAt: new Date("2026-04-05T10:00:00.000Z"),
+				updatedAt: new Date("2026-04-05T10:10:00.000Z"),
+				startedAt: new Date("2026-04-05T10:00:00.000Z"),
+				endedAt: null,
+			},
+		]);
+		queueSelectResult([]);
+		queueSelectResult([]);
+		queueSelectResult([]);
+
+		const { getSessionDashboardHydration, getSessionSymbolHydration } =
+			await import("../sessions");
+		const hydration = await getSessionDashboardHydration({
+			sessionId: "sim_legacy",
+		});
+		const symbolHydration = await getSessionSymbolHydration({
+			sessionId: "sim_legacy",
+			symbol: "MSFT",
+		});
+
+		expect(hydration?.watchlist.AAPL?.lastBar?.close).toBe(150.5);
+		expect(hydration?.watchlist.MSFT?.lastBar?.close).toBe(150);
+		expect(hydration?.watchlist.MSFT?.snapshot?.lastPrice).toBe(150);
+		expect(hydration?.watchlist.MSFT?.snapshot?.bids[0]?.price).toBe(149.95);
+		expect(hydration?.watchlist.MSFT?.snapshot?.asks[0]?.price).toBe(150.05);
+		expect(symbolHydration?.symbol).toBe("MSFT");
+		expect(symbolHydration?.bars).toEqual([
+			{
+				symbol: "MSFT",
+				open: 150,
+				high: 150,
+				low: 150,
+				close: 150,
+				volume: 0,
+				tick: 0,
+			},
+		]);
+		expect(symbolHydration?.snapshot?.lastPrice).toBe(150);
+		expect(symbolHydration?.trades).toEqual([]);
+	});
 });

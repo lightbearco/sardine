@@ -8,6 +8,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "#/components/ui/tooltip";
+import type { AgentEvent } from "#/types/sim";
 
 function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 	if (event.type === "signal") {
@@ -42,12 +43,7 @@ function extractRow(event: ReturnType<typeof useAgentFeed>["events"][number]) {
 		symbol: "—",
 		price: "—",
 		qty: "—",
-		reasoning:
-			event.type === "failed"
-				? event.message
-				: event.type === "thinking_delta"
-					? event.transcript
-					: "Agent event",
+		reasoning: event.type === "failed" ? event.message : "Agent event",
 	};
 }
 
@@ -59,11 +55,20 @@ const SIDE_CLASS: Record<string, string> = {
 
 const COLS = "grid-cols-[48px_1.2fr_72px_60px_64px_44px_1.6fr]";
 
+export function isBlotterEvent(event: AgentEvent): boolean {
+	return (
+		event.type === "signal" ||
+		event.type === "decision" ||
+		event.type === "failed"
+	);
+}
+
 export function Blotter() {
 	const { events } = useAgentFeed(200);
+	const visibleEvents = events.filter(isBlotterEvent);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const virtualizer = useVirtualizer({
-		count: events.length,
+		count: visibleEvents.length,
 		getScrollElement: () => listRef.current,
 		estimateSize: () => 52,
 		overscan: 6,
@@ -77,7 +82,7 @@ export function Blotter() {
 				</span>
 				<div className="flex items-center gap-1.5">
 					<span className="text-[10px] text-(--terminal-text-muted)">
-						{events.length} events
+						{visibleEvents.length} events
 					</span>
 					<MaximizeButton panelId="blotter" />
 				</div>
@@ -104,7 +109,7 @@ export function Blotter() {
 					}}
 				>
 					{virtualizer.getVirtualItems().map((virtualRow) => {
-						const event = events[virtualRow.index];
+						const event = visibleEvents[virtualRow.index];
 						if (!event) {
 							return null;
 						}

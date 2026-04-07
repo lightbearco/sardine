@@ -1,7 +1,12 @@
 import Decimal from "decimal.js";
 import { nanoid } from "nanoid";
 import { createLogger } from "#/lib/logger";
-import type { LOBSnapshot, Order, Trade } from "#/types/market.ts";
+import type {
+	LOBSnapshot,
+	Order,
+	PriceLevelData,
+	Trade,
+} from "#/types/market.ts";
 import { LimitOrderBook } from "./LimitOrderBook.ts";
 
 const log = createLogger("MatchingEngine");
@@ -69,6 +74,7 @@ export class MatchingEngine {
 			const snapshot = book.getSnapshot(1);
 			const referencePrice =
 				snapshot.lastPrice ??
+				book.getLastPrice() ??
 				book.getMidPrice() ??
 				book.getBestBid() ??
 				book.getBestAsk();
@@ -96,6 +102,7 @@ export class MatchingEngine {
 		depth: number,
 		qtyPerLevel: number,
 		tick: number,
+		agentId: string = "market-maker-seed",
 	): Order[] {
 		const book = this.books.get(symbol);
 		if (!book) {
@@ -121,7 +128,7 @@ export class MatchingEngine {
 				qty: qtyPerLevel,
 				filledQty: 0,
 				status: "pending",
-				agentId: "market-maker-seed",
+				agentId,
 				createdAtTick: tick,
 			};
 			book.addOrder(bidOrder, tick);
@@ -136,7 +143,7 @@ export class MatchingEngine {
 				qty: qtyPerLevel,
 				filledQty: 0,
 				status: "pending",
-				agentId: "market-maker-seed",
+				agentId,
 				createdAtTick: tick,
 			};
 			book.addOrder(askOrder, tick);
@@ -144,5 +151,41 @@ export class MatchingEngine {
 		}
 
 		return seededOrders;
+	}
+
+	hydrateSnapshot(
+		symbol: string,
+		input: {
+			bids: Array<PriceLevelData | { price: number; qty: number; orderCount: number }>;
+			asks: Array<PriceLevelData | { price: number; qty: number; orderCount: number }>;
+			lastPrice: number | null;
+			tick: number;
+			orderIdPrefix?: string;
+			agentId?: string;
+		},
+	): Order[] {
+		const book = this.books.get(symbol);
+		if (!book) {
+			throw new Error(`No order book for symbol: ${symbol}`);
+		}
+
+		const toLevels = (
+			levels: Array<PriceLevelData | { price: number; qty: number; orderCount: number }>,
+		) =>
+			levels.map((level) => ({
+				price: new Decimal(level.price),
+				qty: level.qty,
+				orderCount: level.orderCount,
+			}));
+
+		return book.replaceBook({
+			bids: toLevels(input.bids),
+			asks: toLevels(input.asks),
+			lastPrice:
+				input.lastPrice === null ? null : new Decimal(input.lastPrice),
+			tick: input.tick,
+			orderIdPrefix: input.orderIdPrefix,
+			agentId: input.agentId,
+		});
 	}
 }
