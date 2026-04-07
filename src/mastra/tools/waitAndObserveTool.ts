@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "#/db/index";
 import {
 	agents,
+	commands,
 	orders,
 	simConfig,
 	ticks,
@@ -71,6 +72,15 @@ export const waitAndObserveTool = createTool<
 			requestContext: context?.requestContext,
 		});
 		const { eventId } = input;
+		const loadCurrentTick = async () => {
+			const configRows = await db
+				.select({ currentTick: simConfig.currentTick })
+				.from(simConfig)
+				.where(eq(simConfig.sessionId, sessionId))
+				.limit(1);
+
+			return configRows[0]?.currentTick ?? 0;
+		};
 
 		const eventRows = await db
 			.select({
@@ -91,6 +101,81 @@ export const waitAndObserveTool = createTool<
 
 		const event = eventRows[0];
 		if (!event) {
+			const commandRows = await db
+				.select({
+					status: commands.status,
+					resultMessage: commands.resultMessage,
+					payload: commands.payload,
+				})
+				.from(commands)
+				.where(
+					and(
+						eq(commands.sessionId, sessionId),
+						eq(commands.type, "inject_world_event"),
+						sql`${commands.payload}->>'eventId' = ${eventId}`,
+					),
+				)
+				.orderBy(desc(commands.id))
+				.limit(1);
+
+			const command = commandRows[0];
+			if (command) {
+				const currentTick = await loadCurrentTick();
+				const payload =
+					command.payload && typeof command.payload === "object"
+						? (command.payload as {
+								title?: unknown;
+							})
+						: {};
+				const eventTitle =
+					typeof payload.title === "string" ? payload.title : undefined;
+
+				if (command.status === "pending") {
+					return {
+						eventId,
+						eventStatus: "pending",
+						eventTitle,
+						appliedAtTick: null,
+						currentTick,
+						ticksSinceEvent: null,
+						priceChanges: [],
+						volumeSummary: { totalTrades: 0, totalVolume: 0 },
+						notableActions: [],
+						message: `Event "${eventTitle ?? eventId}" is still pending in the command queue. It has not been applied yet, so there is no aftermath to observe. Current tick: ${currentTick}.`,
+					};
+				}
+
+				if (command.status === "rejected") {
+					return {
+						eventId,
+						eventStatus: "rejected",
+						eventTitle,
+						appliedAtTick: null,
+						currentTick,
+						ticksSinceEvent: null,
+						priceChanges: [],
+						volumeSummary: { totalTrades: 0, totalVolume: 0 },
+						notableActions: [],
+						message:
+							command.resultMessage ??
+							`Event "${eventTitle ?? eventId}" was rejected before it could be applied.`,
+					};
+				}
+
+				return {
+					eventId,
+					eventStatus: "processing",
+					eventTitle,
+					appliedAtTick: null,
+					currentTick,
+					ticksSinceEvent: null,
+					priceChanges: [],
+					volumeSummary: { totalTrades: 0, totalVolume: 0 },
+					notableActions: [],
+					message: `Event "${eventTitle ?? eventId}" has been processed by the command queue but is not visible in the event log yet. Ask again in a few ticks.`,
+				};
+			}
+
 			return {
 				eventId,
 				eventStatus: "not_found",
@@ -105,12 +190,7 @@ export const waitAndObserveTool = createTool<
 			};
 		}
 
-		const configRows = await db
-			.select({ currentTick: simConfig.currentTick })
-			.from(simConfig)
-			.where(eq(simConfig.sessionId, sessionId))
-			.limit(1);
-		const currentTick = configRows[0]?.currentTick ?? 0;
+		const currentTick = await loadCurrentTick();
 
 		if (event.status === "queued") {
 			return {
