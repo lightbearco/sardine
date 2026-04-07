@@ -12,7 +12,6 @@ Sardine combines a configurable market simulator, Mastra-powered trading and res
 
 [![Watch the video](https://cdn.loom.com/sessions/thumbnails/0a093cd8c35b4709ade8e393ca0fe1f5-ac684e979ed77997-full-play.gif)](https://www.loom.com/share/0a093cd8c35b4709ade8e393ca0fe1f5)
 
-**Introducing Sardine, the Innovative Stock Market Agent Platform - Watch Video**
 ## Overview
 
 Sardine is designed for running market simulation sessions that feel closer to a trading terminal than a toy demo:
