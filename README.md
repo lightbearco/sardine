@@ -229,16 +229,6 @@ src/
 └── types/        Shared TypeScript contracts for sim state and transport
 ```
 
-## Current Shape
-
-- Local development is tuned for a curated 10-symbol basket and a 50-agent default session profile.
-- The session creation flow currently supports up to 250 agents and up to the 10 development tickers exposed in the UI.
-- Full S&P 500 ticker metadata exists in code, but it is not the default local runtime profile today.
-- Without Alpaca credentials, Sardine falls back to local seeded prices instead of live bootstrap data.
-- Without Firecrawl credentials, research tooling can operate in mock mode.
-- The checked-in env and model configuration is still settling: [`src/env.ts`](./src/env.ts) requires `GOOGLE_GENERATIVE_AI_API_KEY`, while [`src/mastra/models.ts`](./src/mastra/models.ts) currently points at `openai/gpt-5.4-nano` model IDs.
-- Sardine is a simulation and research environment built on Mastra, not a production brokerage or order-routing system.
-
 ## License
 
 Released under the [Apache 2.0 License](./LICENSE).
